@@ -1,0 +1,19 @@
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class GeneratorSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="APM_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    provider_base_url: str = "http://provider-emulator:8000"
+    requests_per_second: float = Field(default=4.0, gt=0, le=100.0)
+    request_timeout_seconds: float = Field(default=2.0, gt=0, le=30.0)
+    healthcheck_interval_seconds: float = Field(default=5.0, gt=0, le=300.0)
+    healthcheck_timeout_seconds: float = Field(default=1.0, gt=0, le=30.0)
+    max_in_flight: int = Field(default=32, ge=1, le=1_000)
+    generator_enabled: bool = True
+    random_seed: int | None = None

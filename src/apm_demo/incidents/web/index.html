@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="Operator-controlled incident intelligence for payment provider degradation."
+    />
+    <title>Sentinel · Incident Intelligence</title>
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">Skip to incident workspace</a>
+
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Sentinel home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" role="img">
+            <path d="M12 2.75 20 6v5.7c0 4.55-3.2 8.68-8 9.55-4.8-.87-8-5-8-9.55V6l8-3.25Z" />
+            <path d="m8.1 12 2.25 2.25 5.55-5.5" />
+          </svg>
+        </span>
+        <span>
+          <strong>Sentinel</strong>
+          <small>Incident intelligence</small>
+        </span>
+      </a>
+
+      <div class="runtime" aria-label="Runtime configuration">
+        <span class="runtime-dot" aria-hidden="true"></span>
+        <span id="runtime-label">Loading runtime…</span>
+        <span class="runtime-separator" aria-hidden="true">·</span>
+        <span id="stream-label">Connecting live feed…</span>
+      </div>
+    </header>
+
+    <main id="workspace" class="workspace" tabindex="-1">
+      <section class="workspace-heading" aria-labelledby="page-title">
+        <div>
+          <p class="context-line">Payment operations / provider health</p>
+          <h1 id="page-title">Provider incidents</h1>
+          <p class="page-summary">
+            Alert-driven investigation with measured evidence, deterministic known-error handling, and operator-controlled AI analysis.
+          </p>
+        </div>
+
+        <form id="analyze-form" class="analyze-control">
+          <label for="provider">Analyze provider</label>
+          <div class="control-row">
+            <select id="provider" name="provider">
+              <option value="atlas-pay">AtlasPay</option>
+              <option value="nova-bank">NovaBank</option>
+              <option value="orbit-wallet">OrbitWallet</option>
+            </select>
+            <button id="analyze-button" class="button button-primary" type="submit">
+              <span class="button-label">Run analysis</span>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section class="incident-workspace" aria-label="Incident workspace">
+        <aside class="incident-rail" aria-labelledby="incident-list-title">
+          <div class="rail-heading">
+            <div>
+              <h2 id="incident-list-title">Incident feed</h2>
+              <span id="incident-count">0 active records</span>
+            </div>
+            <button id="refresh-button" class="icon-button" type="button" aria-label="Refresh incidents">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 11a8.1 8.1 0 0 0-14.9-4.4L3 9m0 0V4m0 5h5M4 13a8.1 8.1 0 0 0 14.9 4.4L21 15m0 0v5m0-5h-5" />
+              </svg>
+            </button>
+          </div>
+          <form id="filter-form" class="filter-bar" aria-label="Incident filters">
+            <label>
+              <span>Provider</span>
+              <select id="filter-provider" name="provider">
+                <option value="">All</option>
+                <option value="atlas-pay">AtlasPay</option>
+                <option value="nova-bank">NovaBank</option>
+                <option value="orbit-wallet">OrbitWallet</option>
+              </select>
+            </label>
+            <label>
+              <span>Status</span>
+              <select id="filter-status" name="status">
+                <option value="">All</option>
+                <option value="open">Open</option>
+                <option value="acknowledged">Acknowledged</option>
+                <option value="resolved">Resolved</option>
+              </select>
+            </label>
+            <label>
+              <span>Source</span>
+              <select id="filter-classification" name="classification">
+                <option value="">All</option>
+                <option value="known">Known catalog</option>
+                <option value="unknown">AI assessed</option>
+                <option value="unavailable">Needs review</option>
+              </select>
+            </label>
+          </form>
+          <div id="incident-list" class="incident-list" aria-live="polite">
+            <div class="list-skeleton" aria-label="Loading incidents">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+        </aside>
+
+        <article id="incident-detail" class="incident-detail" aria-live="polite">
+          <div class="detail-empty">
+            <span class="empty-symbol" aria-hidden="true">◎</span>
+            <h2>No incident selected</h2>
+            <p>Run AtlasPay or OrbitWallet analysis to create an evidence-backed incident.</p>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>

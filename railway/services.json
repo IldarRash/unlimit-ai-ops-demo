@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "services": [
+    {
+      "name": "provider-emulator",
+      "dockerfilePath": "docker/provider-emulator.Dockerfile",
+      "port": 8000,
+      "healthcheckPath": "/health",
+      "network": "private",
+      "requiredVariables": []
+    },
+    {
+      "name": "traffic-generator",
+      "dockerfilePath": "docker/traffic-generator.Dockerfile",
+      "port": 8001,
+      "healthcheckPath": "/health",
+      "network": "private",
+      "requiredVariables": [
+        "APM_PROVIDER_BASE_URL",
+        "APM_REQUESTS_PER_SECOND",
+        "APM_REQUEST_TIMEOUT_SECONDS",
+        "APM_HEALTHCHECK_INTERVAL_SECONDS",
+        "APM_HEALTHCHECK_TIMEOUT_SECONDS"
+      ]
+    },
+    {
+      "name": "prometheus",
+      "dockerfilePath": "docker/prometheus.Dockerfile",
+      "port": 9090,
+      "healthcheckPath": null,
+      "healthcheckNote": "Prometheus web authentication protects all HTTP paths; Railway has no healthcheck-header configuration.",
+      "network": "public-authenticated",
+      "requiredVariables": [
+        "APM_DEPLOYMENT_TARGET",
+        "APM_INCIDENT_METRICS_TOKEN",
+        "PROMETHEUS_WEB_USERNAME",
+        "PROMETHEUS_WEB_PASSWORD_HASH"
+      ]
+    },
+    {
+      "name": "alertmanager",
+      "dockerfilePath": "docker/alertmanager.Dockerfile",
+      "port": 9093,
+      "healthcheckPath": "/-/ready",
+      "network": "private",
+      "requiredVariables": [
+        "APM_DEPLOYMENT_TARGET",
+        "APM_INCIDENT_ALERTMANAGER_TOKEN"
+      ]
+    },
+    {
+      "name": "grafana",
+      "dockerfilePath": "docker/grafana.Dockerfile",
+      "port": 3000,
+      "healthcheckPath": "/api/health",
+      "network": "public-authenticated",
+      "requiredVariables": [
+        "GF_SECURITY_ADMIN_USER",
+        "GF_SECURITY_ADMIN_PASSWORD",
+        "GRAFANA_TESTER_USER",
+        "GRAFANA_TESTER_PASSWORD",
+        "PROMETHEUS_URL",
+        "PROMETHEUS_WEB_USERNAME",
+        "PROMETHEUS_WEB_PASSWORD"
+      ]
+    },
+    {
+      "name": "incident-api",
+      "dockerfilePath": "docker/incident-api.Dockerfile",
+      "port": 8002,
+      "healthcheckPath": "/ready",
+      "network": "public-authenticated",
+      "requiredVariables": [
+        "APM_INCIDENT_OPERATOR_AUTH_ENABLED",
+        "DEMO_AUTH_USER",
+        "DEMO_AUTH_PASSWORD",
+        "APM_INCIDENT_METRICS_TOKEN",
+        "APM_INCIDENT_ALERTMANAGER_TOKEN",
+        "APM_INCIDENT_PROVIDER_EVENT_TOKEN",
+        "APM_INCIDENT_CATALOG_ADMIN_TOKEN",
+        "APM_INCIDENT_PROMETHEUS_URL",
+        "APM_INCIDENT_ENFORCE_INGRESS_NETWORKS",
+        "DATABASE_URL"
+      ]
+    }
+  ]
+}

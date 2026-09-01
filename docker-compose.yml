@@ -1,0 +1,153 @@
+name: unlimit-ai-ops-demo
+
+services:
+  provider-emulator:
+    build:
+      context: .
+      dockerfile: docker/provider-emulator.Dockerfile
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  traffic-generator:
+    build:
+      context: .
+      dockerfile: docker/traffic-generator.Dockerfile
+    environment:
+      APM_PROVIDER_BASE_URL: http://provider-emulator:8000
+      APM_REQUESTS_PER_SECOND: ${APM_REQUESTS_PER_SECOND:-4}
+      APM_REQUEST_TIMEOUT_SECONDS: ${APM_REQUEST_TIMEOUT_SECONDS:-2}
+      APM_HEALTHCHECK_INTERVAL_SECONDS: ${APM_HEALTHCHECK_INTERVAL_SECONDS:-5}
+      APM_HEALTHCHECK_TIMEOUT_SECONDS: ${APM_HEALTHCHECK_TIMEOUT_SECONDS:-1}
+    ports:
+      - "8001:8001"
+    depends_on:
+      provider-emulator:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  prometheus:
+    build:
+      context: .
+      dockerfile: docker/prometheus.Dockerfile
+    ports:
+      - "9090:9090"
+    environment:
+      PORT: 9090
+      APM_DEPLOYMENT_TARGET: compose
+      APM_INCIDENT_METRICS_TOKEN: ${APM_INCIDENT_METRICS_TOKEN:?Set APM_INCIDENT_METRICS_TOKEN in .env}
+    depends_on:
+      provider-emulator:
+        condition: service_healthy
+      traffic-generator:
+        condition: service_healthy
+      alertmanager:
+        condition: service_started
+    volumes:
+      - prometheus-data:/prometheus
+
+  alertmanager:
+    build:
+      context: .
+      dockerfile: docker/alertmanager.Dockerfile
+    expose:
+      - "9093"
+    environment:
+      PORT: 9093
+      APM_DEPLOYMENT_TARGET: compose
+    secrets:
+      - alertmanager_webhook_token
+    volumes:
+      - alertmanager-data:/alertmanager
+
+  grafana:
+    build:
+      context: .
+      dockerfile: docker/grafana.Dockerfile
+    environment:
+      PORT: 3000
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?Set GRAFANA_ADMIN_USER in .env}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      PROMETHEUS_URL: http://prometheus:9090
+      PROMETHEUS_WEB_USERNAME: ${PROMETHEUS_WEB_USERNAME:-}
+      PROMETHEUS_WEB_PASSWORD: ${PROMETHEUS_WEB_PASSWORD:-}
+      GF_USERS_DEFAULT_THEME: light
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/apm-provider-observability.json
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+  incident-api:
+    build:
+      context: .
+      dockerfile: docker/incident-api.Dockerfile
+    environment:
+      APM_INCIDENT_METRICS_MODE: prometheus
+      APM_INCIDENT_ANALYZER_MODE: ${APM_INCIDENT_ANALYZER_MODE:-mock}
+      APM_INCIDENT_PROMETHEUS_URL: http://prometheus:9090
+      APM_INCIDENT_ANALYSIS_WINDOW_SECONDS: ${APM_INCIDENT_ANALYSIS_WINDOW_SECONDS:-300}
+      APM_INCIDENT_REQUEST_TIMEOUT_SECONDS: ${APM_INCIDENT_REQUEST_TIMEOUT_SECONDS:-5}
+      APM_INCIDENT_OPENAI_MODEL: ${APM_INCIDENT_OPENAI_MODEL:-gpt-5.4-mini}
+      APM_INCIDENT_DATABASE_PATH: /data/incidents.db
+      APM_INCIDENT_ALERTMANAGER_TOKEN_FILE: /run/secrets/alertmanager_webhook_token
+      APM_INCIDENT_PROVIDER_EVENT_TOKEN_FILE: /run/secrets/provider_event_token
+      APM_INCIDENT_CATALOG_ADMIN_TOKEN_FILE: /run/secrets/catalog_admin_token
+      APM_INCIDENT_METRICS_TOKEN: ${APM_INCIDENT_METRICS_TOKEN:?Set APM_INCIDENT_METRICS_TOKEN in .env}
+      APM_INCIDENT_OPERATOR_AUTH_ENABLED: ${APM_INCIDENT_OPERATOR_AUTH_ENABLED:-false}
+      APM_INCIDENT_TRUSTED_INGRESS_NETWORKS: ${APM_INCIDENT_TRUSTED_INGRESS_NETWORKS:-127.0.0.1/32,172.16.0.0/12}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "8002:8002"
+    depends_on:
+      - prometheus
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=2)
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    secrets:
+      - alertmanager_webhook_token
+      - provider_event_token
+      - catalog_admin_token
+    volumes:
+      - incident-data:/data
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  alertmanager-data:
+  incident-data:
+
+secrets:
+  alertmanager_webhook_token:
+    file: ./secrets/alertmanager_webhook_token
+  provider_event_token:
+    file: ./secrets/provider_event_token
+  catalog_admin_token:
+    file: ./secrets/catalog_admin_token
