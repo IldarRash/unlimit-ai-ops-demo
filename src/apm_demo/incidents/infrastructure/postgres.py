@@ -13,6 +13,7 @@ from apm_demo.common.contracts import ProviderId
 from apm_demo.incidents.domain import (
     CatalogAuditAction,
     CatalogAuditEvent,
+    ExternalSignal,
     IncidentAuditEvent,
     IncidentFeedback,
     IncidentRecord,
@@ -24,7 +25,7 @@ from apm_demo.incidents.domain import (
 from apm_demo.incidents.infrastructure.sqlite import CatalogAmbiguityError
 
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _MIGRATION_LOCK = "apm_demo_incidents_schema"
 
 
@@ -75,6 +76,8 @@ class PostgresIncidentStore:
                         await self._create_schema(connection)
                     elif version == 2:
                         await self._migrate_legacy_analysis_provider(connection)
+                    elif version == 3:
+                        await self._create_external_signals(connection)
                     await connection.execute(
                         "INSERT INTO schema_migrations(version) VALUES (%s)",
                         (version,),
@@ -127,6 +130,18 @@ class PostgresIncidentStore:
             """
             CREATE INDEX IF NOT EXISTS provider_events_recent_idx
             ON provider_events(provider, observed_at DESC)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS external_signals (
+                signal_id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                observed_at TIMESTAMPTZ NOT NULL,
+                payload_json JSONB NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS external_signals_recent_idx
+            ON external_signals(provider, observed_at DESC)
             """,
             """
             CREATE TABLE IF NOT EXISTS known_error_rules (
@@ -203,6 +218,25 @@ class PostgresIncidentStore:
                 '"legacy-analysis-unavailable-v1"'::jsonb
             )
             WHERE payload_json #>> '{analysis,generated_by}' = 'mock'
+            """
+        )
+
+    @staticmethod
+    async def _create_external_signals(connection: AsyncConnection[Any]) -> None:
+        await connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS external_signals (
+                signal_id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                observed_at TIMESTAMPTZ NOT NULL,
+                payload_json JSONB NOT NULL
+            )
+            """
+        )
+        await connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS external_signals_recent_idx
+            ON external_signals(provider, observed_at DESC)
             """
         )
 
@@ -316,6 +350,43 @@ class PostgresIncidentStore:
             (provider.value, limit),
         )
         return tuple(ProviderEvent.model_validate(row[0]) for row in rows)
+
+    async def append_external_signal(self, signal: ExternalSignal) -> ExternalSignal:
+        async with self._pool.connection() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    """
+                    INSERT INTO external_signals(signal_id, provider, observed_at, payload_json)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT(signal_id) DO NOTHING
+                    """,
+                    (
+                        signal.signal_id,
+                        signal.provider.value,
+                        signal.observed_at,
+                        self._json(signal),
+                    ),
+                )
+        row = await self._fetchone(
+            "SELECT payload_json FROM external_signals WHERE signal_id = %s",
+            (signal.signal_id,),
+        )
+        assert row is not None
+        return ExternalSignal.model_validate(row[0])
+
+    async def list_recent_external_signals(
+        self, provider: ProviderId, *, limit: int = 12
+    ) -> tuple[ExternalSignal, ...]:
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        rows = await self._fetchall(
+            """
+            SELECT payload_json FROM external_signals
+            WHERE provider = %s ORDER BY observed_at DESC LIMIT %s
+            """,
+            (provider.value, limit),
+        )
+        return tuple(ExternalSignal.model_validate(row[0]) for row in rows)
 
     async def list_recent_events_for_provider(
         self, provider: ProviderId, *, limit: int = 20

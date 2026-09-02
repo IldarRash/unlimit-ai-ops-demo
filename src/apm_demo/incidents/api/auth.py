@@ -95,6 +95,7 @@ def is_integration_or_catalog_path(path: str) -> bool:
     return path in {
         "/api/v1/integrations/alertmanager",
         "/api/v1/provider-events",
+        "/api/v1/external-signals",
     } or path.startswith("/api/v1/catalog")
 
 

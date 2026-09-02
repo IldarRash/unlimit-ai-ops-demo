@@ -122,6 +122,7 @@ def pipeline(
         classifier=IncidentClassifier(catalog=store, analyzer=analyzer),
         incidents=store,
         provider_events=store,
+        external_signals=store,
         deliveries=store,
         events=IncidentEventBus(),
     )

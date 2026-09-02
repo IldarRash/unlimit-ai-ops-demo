@@ -22,6 +22,7 @@ from apm_demo.incidents.domain import (
 )
 from apm_demo.incidents.ports import (
     AuditLog,
+    ExternalSignalRepository,
     IncidentAnalyzer,
     IncidentRepository,
     MetricsSource,
@@ -39,8 +40,10 @@ class AnalyzeProviderIncident:
         incidents: IncidentRepository,
         audit_log: AuditLog,
         provider_events: ProviderEventRepository | None = None,
+        external_signals: ExternalSignalRepository | None = None,
         classifier: IncidentClassifier | None = None,
         event_limit: int = 20,
+        external_signal_limit: int = 12,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
         self._metrics = metrics
@@ -49,8 +52,10 @@ class AnalyzeProviderIncident:
         self._incidents = incidents
         self._audit_log = audit_log
         self._provider_events = provider_events
+        self._external_signals = external_signals
         self._classifier = classifier
         self._event_limit = event_limit
+        self._external_signal_limit = external_signal_limit
         self._now = now
 
     async def execute(
@@ -68,10 +73,18 @@ class AnalyzeProviderIncident:
             if self._provider_events is not None
             else ()
         )
+        external_signals = (
+            await self._external_signals.list_recent_external_signals(
+                provider, limit=self._external_signal_limit
+            )
+            if self._external_signals is not None
+            else ()
+        )
         evidence = EvidenceBundle(
             snapshot=snapshot,
             signals=signals,
             provider_events=provider_events,
+            external_signals=external_signals,
             source=type(self._metrics).__name__,
             collected_at=self._now(),
         )

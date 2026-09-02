@@ -12,6 +12,7 @@ from apm_demo.common.contracts import ProviderId
 from apm_demo.incidents.domain import (
     CatalogAuditAction,
     CatalogAuditEvent,
+    ExternalSignal,
     IncidentAuditEvent,
     IncidentFeedback,
     IncidentRecord,
@@ -100,6 +101,15 @@ class SQLiteIncidentStore:
             );
             CREATE INDEX IF NOT EXISTS provider_events_recent_idx
                 ON provider_events(provider, observed_at DESC);
+
+            CREATE TABLE IF NOT EXISTS external_signals (
+                signal_id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS external_signals_recent_idx
+                ON external_signals(provider, observed_at DESC);
 
             CREATE TABLE IF NOT EXISTS known_error_rules (
                 rule_id TEXT NOT NULL,
@@ -342,6 +352,48 @@ class SQLiteIncidentStore:
                 (provider.value, limit),
             ).fetchall()
             return tuple(ProviderEvent.model_validate_json(row[0]) for row in rows)
+
+        return await self._read(operation)
+
+    async def append_external_signal(self, signal: ExternalSignal) -> ExternalSignal:
+        def operation(connection: sqlite3.Connection) -> ExternalSignal:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO external_signals(
+                    signal_id, provider, observed_at, payload_json
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    signal.signal_id,
+                    signal.provider.value,
+                    signal.observed_at.isoformat(),
+                    signal.model_dump_json(),
+                ),
+            )
+            row = connection.execute(
+                "SELECT payload_json FROM external_signals WHERE signal_id = ?",
+                (signal.signal_id,),
+            ).fetchone()
+            assert row is not None
+            return ExternalSignal.model_validate_json(row[0])
+
+        return await self._write(operation)
+
+    async def list_recent_external_signals(
+        self, provider: ProviderId, *, limit: int = 12
+    ) -> tuple[ExternalSignal, ...]:
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+
+        def operation(connection: sqlite3.Connection) -> tuple[ExternalSignal, ...]:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM external_signals
+                WHERE provider = ? ORDER BY observed_at DESC LIMIT ?
+                """,
+                (provider.value, limit),
+            ).fetchall()
+            return tuple(ExternalSignal.model_validate_json(row[0]) for row in rows)
 
         return await self._read(operation)
 

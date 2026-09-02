@@ -11,6 +11,7 @@ from apm_demo.incidents.infrastructure.analysis import (
 )
 from apm_demo.incidents.infrastructure.repositories import (
     InMemoryAuditLog,
+    InMemoryExternalSignalRepository,
     InMemoryIncidentRepository,
 )
 from apm_demo.incidents.infrastructure.sqlite import (
@@ -24,6 +25,7 @@ __all__ = [
     "DeterministicMetricsSource",
     "MetricsUnavailable",
     "InMemoryAuditLog",
+    "InMemoryExternalSignalRepository",
     "InMemoryIncidentRepository",
     "OpenAIIncidentAnalyzer",
     "PrometheusMetricsSource",

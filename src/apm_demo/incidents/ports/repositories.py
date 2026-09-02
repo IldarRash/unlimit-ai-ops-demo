@@ -5,6 +5,7 @@ from typing import Protocol
 from apm_demo.common.contracts import ProviderId
 from apm_demo.incidents.domain import (
     IncidentAuditEvent,
+    ExternalSignal,
     IncidentFeedback,
     IncidentRecord,
     KnownErrorRule,
@@ -46,6 +47,14 @@ class ProviderEventRepository(Protocol):
     async def list_recent_events(
         self, provider: ProviderId, *, limit: int = 20
     ) -> tuple[ProviderEvent, ...]: ...
+
+
+class ExternalSignalRepository(Protocol):
+    async def append_external_signal(self, signal: ExternalSignal) -> ExternalSignal: ...
+
+    async def list_recent_external_signals(
+        self, provider: ProviderId, *, limit: int = 12
+    ) -> tuple[ExternalSignal, ...]: ...
 
 
 class KnownErrorCatalog(Protocol):

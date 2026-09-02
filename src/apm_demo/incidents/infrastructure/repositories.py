@@ -3,10 +3,35 @@ from __future__ import annotations
 import asyncio
 
 from apm_demo.incidents.domain import (
+    ExternalSignal,
     IncidentAuditEvent,
     IncidentRecord,
     IncidentStatus,
 )
+
+
+class InMemoryExternalSignalRepository:
+    def __init__(self) -> None:
+        self._signals: dict[str, ExternalSignal] = {}
+        self._lock = asyncio.Lock()
+
+    async def append_external_signal(self, signal: ExternalSignal) -> ExternalSignal:
+        async with self._lock:
+            self._signals.setdefault(signal.signal_id, signal.model_copy(deep=True))
+            return self._signals[signal.signal_id].model_copy(deep=True)
+
+    async def list_recent_external_signals(
+        self, provider, *, limit: int = 12
+    ) -> tuple[ExternalSignal, ...]:
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        async with self._lock:
+            items = sorted(
+                (item for item in self._signals.values() if item.provider is provider),
+                key=lambda item: item.observed_at,
+                reverse=True,
+            )[:limit]
+            return tuple(item.model_copy(deep=True) for item in items)
 
 
 class InMemoryIncidentRepository:

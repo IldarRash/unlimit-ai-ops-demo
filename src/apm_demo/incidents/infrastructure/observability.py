@@ -35,6 +35,12 @@ class PipelineMetrics:
             ("provider", "outcome"),
             registry=self.registry,
         )
+        self.external_signals = Counter(
+            "incident_pipeline_external_signals_total",
+            "Sanitized external operational signals accepted.",
+            ("provider", "signal_type"),
+            registry=self.registry,
+        )
         self.feedback = Counter(
             "incident_pipeline_feedback_total",
             "Operator feedback by verdict.",

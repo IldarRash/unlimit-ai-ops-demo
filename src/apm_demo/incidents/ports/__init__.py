@@ -5,6 +5,7 @@ from apm_demo.incidents.ports.evidence import MetricsSource, MetricsUnavailable
 from apm_demo.incidents.ports.repositories import (
     AuditLog,
     DeliveryLedger,
+    ExternalSignalRepository,
     FeedbackRepository,
     IncidentRepository,
     KnownErrorCatalog,
@@ -15,6 +16,7 @@ __all__ = [
     "AuditLog",
     "AnalysisUnavailable",
     "DeliveryLedger",
+    "ExternalSignalRepository",
     "FeedbackRepository",
     "IncidentAnalyzer",
     "IncidentRepository",

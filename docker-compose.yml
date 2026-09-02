@@ -144,6 +144,7 @@ services:
       DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
       APM_INCIDENT_ALERTMANAGER_TOKEN_FILE: /run/secrets/alertmanager_webhook_token
       APM_INCIDENT_PROVIDER_EVENT_TOKEN_FILE: /run/secrets/provider_event_token
+      APM_INCIDENT_EXTERNAL_SIGNAL_TOKEN_FILE: /run/secrets/provider_event_token
       APM_INCIDENT_CATALOG_ADMIN_TOKEN_FILE: /run/secrets/catalog_admin_token
       APM_INCIDENT_METRICS_TOKEN: ${APM_INCIDENT_METRICS_TOKEN:?Set APM_INCIDENT_METRICS_TOKEN in .env}
       APM_INCIDENT_OPERATOR_AUTH_ENABLED: ${APM_INCIDENT_OPERATOR_AUTH_ENABLED:-false}

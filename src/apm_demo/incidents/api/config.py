@@ -37,11 +37,14 @@ class IncidentSettings(BaseSettings):
     alertmanager_token_file: str | None = None
     provider_event_token: SecretStr = SecretStr("dev-provider-event-token-change-me")
     provider_event_token_file: str | None = None
+    external_signal_token: SecretStr = SecretStr("dev-external-signal-token-change-me")
+    external_signal_token_file: str | None = None
     catalog_admin_token: SecretStr = SecretStr("dev-catalog-admin-token-change-me")
     catalog_admin_token_file: str | None = None
     enforce_ingress_networks: bool = True
     trusted_ingress_networks: str = "127.0.0.1/32,::1/128"
     provider_event_limit: int = Field(default=20, ge=1, le=100)
+    external_signal_limit: int = Field(default=12, ge=1, le=100)
     minimum_requests: int = Field(default=20, ge=1)
     warning_p95_latency_ms: float = Field(default=800, gt=0)
     critical_p95_latency_ms: float = Field(default=1_500, gt=0)
@@ -68,6 +71,7 @@ class IncidentSettings(BaseSettings):
         for name, secret in (
             ("alertmanager_token", self.alertmanager_token),
             ("provider_event_token", self.provider_event_token),
+            ("external_signal_token", self.external_signal_token),
             ("catalog_admin_token", self.catalog_admin_token),
         ):
             if len(secret.get_secret_value().strip()) < 20:
@@ -91,6 +95,9 @@ class IncidentSettings(BaseSettings):
 
     def provider_event_token_value(self) -> str:
         return self._secret_value(self.provider_event_token, self.provider_event_token_file)
+
+    def external_signal_token_value(self) -> str:
+        return self._secret_value(self.external_signal_token, self.external_signal_token_file)
 
     def catalog_admin_token_value(self) -> str:
         return self._secret_value(self.catalog_admin_token, self.catalog_admin_token_file)

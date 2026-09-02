@@ -12,6 +12,8 @@ from apm_demo.incidents.domain import (
     CauseHypothesis,
     IncidentAnalysis,
     EvidenceBundle,
+    ExternalSignal,
+    ExternalSignalType,
     MetricSnapshot,
     RemediationAction,
 )
@@ -92,6 +94,60 @@ async def test_openai_adapter_rejects_unreferenced_evidence() -> None:
     analyzer = OpenAIIncidentAnalyzer("sk-test-abcdefghijklmnopqrstuvwxyz", model="test-model", requests_enabled=True, client=client, max_attempts=1)
     with pytest.raises(AnalysisUnavailable):
         await analyzer.analyze(evidence())
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_accepts_supplied_external_signal_reference() -> None:
+    supplied = evidence().model_copy(
+        update={
+            "external_signals": (
+                ExternalSignal(
+                    signal_id="status_001",
+                    provider=ProviderId.ATLAS_PAY,
+                    signal_type=ExternalSignalType.PROVIDER_STATUS,
+                    title="Provider status degradation",
+                    summary="Sanitized provider status reports elevated errors.",
+                    source_ref="status.example/incidents/001",
+                ),
+            )
+        }
+    )
+    output = {
+        "headline": "Correlated provider degradation",
+        "summary": "Metrics and the provider status signal align.",
+        "impact": "Some payments may fail.",
+        "probable_causes": ["Provider degradation"],
+        "causes": [
+            {
+                "category": "technical",
+                "title": "Provider degradation",
+                "why": "The supplied status signal corroborates the metrics.",
+                "evidence_refs": ["external:status_001", "snapshot"],
+            }
+        ],
+        "recommended_actions": [
+            {"priority": 1, "title": "Verify status", "rationale": "Confirm before mitigation."}
+        ],
+        "confidence": 0.8,
+    }
+    client = httpx.AsyncClient(
+        base_url="https://api.openai.test/v1",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"output_text": json.dumps(output)})
+        ),
+    )
+    analyzer = OpenAIIncidentAnalyzer(
+        "sk-test-abcdefghijklmnopqrstuvwxyz",
+        model="test-model",
+        requests_enabled=True,
+        client=client,
+        max_attempts=1,
+    )
+
+    result = await analyzer.analyze(supplied)
+
+    assert result.causes[0].evidence_refs[0] == "external:status_001"
     await client.aclose()
 
 

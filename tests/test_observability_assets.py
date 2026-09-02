@@ -112,6 +112,21 @@ def test_deployment_assets_use_variable_references_not_credentials() -> None:
     assert services["grafana"]["network"] == "public-authenticated"
     assert services["incident-api"]["network"] == "public-authenticated"
     assert services["alertmanager"]["network"] == "private"
+    assert {
+        "APM_INCIDENT_API_URL",
+        "APM_PROVIDER_EVENT_TOKEN",
+    } <= set(services["traffic-generator"]["requiredVariables"])
+    assert {
+        "APM_INCIDENT_EXTERNAL_SIGNAL_TOKEN",
+        "APM_INCIDENT_PROMETHEUS_URL",
+        "APM_INCIDENT_TRAFFIC_GENERATOR_URL",
+        "APM_INCIDENT_PROVIDER_EMULATOR_URL",
+        "APM_INCIDENT_GRAFANA_PUBLIC_URL",
+        "APM_INCIDENT_OPENAI_MODEL",
+        "APM_INCIDENT_OPENAI_REQUESTS_ENABLED",
+        "OPENAI_API_KEY",
+        "DATABASE_URL",
+    } <= set(services["incident-api"]["requiredVariables"])
 
 
 def test_incident_pipeline_dashboard_covers_operational_signals() -> None:
@@ -134,6 +149,7 @@ def test_incident_pipeline_dashboard_covers_operational_signals() -> None:
     assert "incident_pipeline_provider_events_total" in expressions
     assert "incident_pipeline_rejections_total" in expressions
     assert "apm_generator_provider_events_total" in expressions
+    assert "incident_pipeline_external_signals_total" in expressions
 
 
 def test_business_decline_alert_separates_commercial_from_technical_failures() -> None:

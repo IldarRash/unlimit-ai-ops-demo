@@ -30,6 +30,7 @@ from apm_demo.incidents.domain import (
 )
 from apm_demo.incidents.ports import (
     DeliveryLedger,
+    ExternalSignalRepository,
     IncidentRepository,
     MetricsSource,
     MetricsUnavailable,
@@ -50,9 +51,11 @@ class AlertIncidentPipeline:
         classifier: IncidentClassifier,
         incidents: IncidentRepository,
         provider_events: ProviderEventRepository,
+        external_signals: ExternalSignalRepository,
         deliveries: DeliveryLedger,
         events: IncidentEventBus,
         event_limit: int = 20,
+        external_signal_limit: int = 12,
         window_seconds: int = 300,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
@@ -61,9 +64,11 @@ class AlertIncidentPipeline:
         self._classifier = classifier
         self._incidents = incidents
         self._provider_events = provider_events
+        self._external_signals = external_signals
         self._deliveries = deliveries
         self._events = events
         self._event_limit = event_limit
+        self._external_signal_limit = external_signal_limit
         self._window_seconds = window_seconds
         self._now = now
 
@@ -153,6 +158,9 @@ class AlertIncidentPipeline:
         provider_events = await self._provider_events.list_recent_events(
             provider, limit=self._event_limit
         )
+        external_signals = await self._external_signals.list_recent_external_signals(
+            provider, limit=self._external_signal_limit
+        )
         evidence = EvidenceBundle(
             snapshot=snapshot,
             signals=signals,
@@ -165,6 +173,7 @@ class AlertIncidentPipeline:
                 truncated=webhook.truncated_alerts > 0,
             ),
             provider_events=provider_events,
+            external_signals=external_signals,
             source=evidence_source,
             collected_at=self._now(),
         )

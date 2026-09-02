@@ -110,6 +110,18 @@
       ],
       "title": "Provider-event delivery status",
       "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+      "id": 9,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "targets": [
+        {"expr": "sum by (provider, signal_type) (increase(incident_pipeline_external_signals_total[15m]))", "legendFormat": "{{provider}} · {{signal_type}}", "refId": "A"}
+      ],
+      "title": "External operational signal ingress",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",

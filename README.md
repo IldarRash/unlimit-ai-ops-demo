@@ -19,7 +19,8 @@ Sentinel is a working Technical Operations demo for investigating degradation ac
 - Human-controlled incident lifecycle, advisory-only remediation, feedback capture, full audit trail, correlation, replay protection, and deduplication.
 - PostgreSQL persistence for the complete Compose/Railway runtime and SQLite as an explicit local/test fallback.
 - Same-origin operator API: the browser never needs direct access to private provider or traffic-generator services.
-- 66 automated tests covering domain contracts, OpenAI request/response validation with local fakes, the network-request gate, catalog bypass, orchestration, API access control, demo controls, observability assets, and persistence selection.
+- Authenticated external operational signals for provider status, support tickets, Slack/email escalations, merchant complaints, and operations reports. Only normalized, explicitly non-customer data enters the evidence bundle.
+- 69 automated tests covering domain contracts, OpenAI request/response validation with local fakes, the network-request gate, catalog bypass, external-signal ingestion, orchestration, API access control, demo controls, observability assets, and persistence selection.
 
 No production mock analyzer remains. Runtime configuration requires an `OPENAI_API_KEY`. A separate `APM_INCIDENT_OPENAI_REQUESTS_ENABLED` gate defaults to `false`, so a key can be configured without accidental external requests during local verification. Automated tests inject local fake analyzers and never call the external API.
 
@@ -114,6 +115,7 @@ APM_REQUESTS_PER_SECOND=4
 APM_INCIDENT_METRICS_MODE=prometheus
 APM_INCIDENT_GRAFANA_PUBLIC_URL=http://localhost:3000
 APM_INCIDENT_METRICS_TOKEN=replace_with_a_random_scrape_token
+APM_INCIDENT_EXTERNAL_SIGNAL_TOKEN=replace_with_a_random_external_signal_token
 GRAFANA_ADMIN_USER=admin
 GRAFANA_ADMIN_PASSWORD=replace_with_a_random_admin_password
 ```
@@ -144,13 +146,14 @@ DEMO_AUTH_PASSWORD=replace_with_a_random_operator_password
 | `POST` | `/api/v1/incidents/{id}/feedback` | Record operator feedback |
 | `POST` | `/api/v1/integrations/alertmanager` | Receive authenticated Alertmanager webhooks |
 | `POST` | `/api/v1/provider-events` | Store allowlisted, normalized provider evidence |
+| `GET/POST` | `/api/v1/external-signals` | List or ingest authenticated, sanitized operational signals |
 | `GET/POST/PUT/DELETE` | `/api/v1/catalog/...` | Manage versioned deterministic known-error rules |
 
 OpenAPI documentation is at `http://localhost:8002/docs`.
 
 ## Assessment alignment
 
-The source assignment asks for practical, controlled improvement of APM operational workflows, with emphasis on incident triage, signal validation, summarization, routing, runbook support, and process automation. This repository implements the working-code demonstration; the remaining written-submission work is tracked below rather than presented as complete.
+The source assignment asks for practical, controlled improvement of APM operational workflows, with emphasis on incident triage, signal validation, summarization, routing, runbook support, and process automation. This repository now contains both the working-code demonstration and the written/evaluation artifacts. Protected live-model and public-deployment verification remain explicitly gated below.
 
 ### Assignment objective and scenario coverage
 
@@ -159,22 +162,22 @@ The source assignment asks for practical, controlled improvement of APM operatio
 | Reduce manual signal review and evidence collection | Done | Alerts, Prometheus queries, normalized provider events, evidence bundles |
 | Improve consistency and decision speed | Done | Deterministic thresholds, catalog bypass, structured output, deduplication |
 | Payment dashboards and transaction metrics | Done | Two Grafana dashboards and weighted baseline traffic |
-| Provider/PSP status pages | Not yet | Graph node `N3` |
-| Support tickets, Slack, email escalations | Not yet | Graph node `N3` |
-| Merchant complaints and operational reports | Not yet | Graph node `N3` |
-| Manual operations checks | Partial | Operator-triggered analysis and status controls exist; formal runbook checklist is in `N1` |
+| Provider/PSP status pages | Done | Authenticated `provider-status` signal contract and CLI adapter feed provider-scoped evidence |
+| Support tickets, Slack, email escalations | Done as normalized ingestion | Authenticated support/Slack/email signal types; source systems can call the adapter/API |
+| Merchant complaints and operational reports | Done as normalized ingestion | Authenticated merchant/operations signal types with count, region, severity, and source reference |
+| Manual operations checks | Done | Operator-triggered analysis, evidence-backed checks, incident lifecycle controls, and proposal runbook flow |
 | Working practical demonstration | Done in code | Compose stack, controls, scenarios, alerts, incidents, Grafana, Postgres |
-| Short written proposal with three AI use cases | Not yet | Graph node `N1` |
+| Short written proposal with three AI use cases | Authored | Markdown and generated DOCX in `docs/submission`; final DOCX visual render check remains pending |
 
 ### Evaluation criteria
 
 | Criterion | Current coverage | Remaining gap |
 | --- | --- | --- |
-| Operational thinking | Realistic provider-specific triage, business/technical separation, prioritization, recovery | Summarize handoffs and assumptions in the 2–4 page proposal (`N1`) |
-| AI judgment | Rules handle known errors; OpenAI handles unknowns; failures close to manual review | Add explicit three-use-case comparison and limitations (`N1`) |
-| Agent design | Trigger, normalized inputs, decision branch, advisory actions, human status control, guardrails, audit trail | Produce the concise submission diagram/narrative (`N1`) |
-| Automation mindset | Metrics → alert → evidence → classification → incident → operator feedback is automated | Add external status/support/communication connectors (`N3`) |
-| Communication | README, API docs, dashboards, and compact operator UI are implemented | Final 2–4 page decision-oriented submission and optional walkthrough (`N1`, `N7`) |
+| Operational thinking | Realistic provider-specific triage, business/technical separation, prioritization, recovery, handoffs, and assumptions | Covered in code, walkthrough, and proposal |
+| AI judgment | Rules handle known errors; OpenAI handles unknowns; failures close to manual review; use-case limits are explicit | Covered in classifier, proposal, and evaluation plan |
+| Agent design | Trigger, normalized inputs, decision branch, advisory actions, human status control, guardrails, audit trail | Covered in implementation and proposal diagram/narrative |
+| Automation mindset | Metrics → alert → evidence → classification → incident → operator feedback is automated; external signals join the evidence | Covered in runtime and authenticated integration API |
+| Communication | README, API docs, dashboards, compact operator UI, proposal, and reproducible evaluation are present | DOCX visual render certification remains before submission |
 
 ### Optional bonus coverage
 
@@ -182,38 +185,41 @@ The source assignment asks for practical, controlled improvement of APM operatio
 | --- | --- |
 | Prompt structure | Implemented as versioned system instructions plus strict JSON Schema |
 | Confidence and severity | Implemented |
-| Feedback loop | Feedback capture implemented; offline evaluation/improvement loop remains `N2` |
-| Cost/latency trade-offs | Not yet; `N2` |
-| KPI framework | Not yet; `N2` |
+| Feedback loop | Feedback capture plus a documented repeatable evaluation/improvement loop |
+| Cost/latency trade-offs | Model budget and offline timing documented in `docs/evaluation/evaluation-plan.md` |
+| KPI framework | Accuracy, false-positive, bypass, evidence, helpfulness, latency, cost, MTTA, and MTTR targets documented |
 
-## Remaining graph nodes
+## Delivery graph status
 
 ```text
-N0 Current working prototype
- ├──> N1 Written assessment package
- │     problem framing + 3 AI use cases + detailed agent design + human handoffs
- ├──> N2 Evaluation and KPI package
- │     golden incident set + accuracy/coverage + MTTA/MTTR + cost/latency budget
- ├──> N3 External signal integrations
- │     provider status + support/Slack/email + merchant/ops reports
- └──> N4 Enable gate and run live OpenAI smoke [requires explicit approval for paid request]
+N0 Working prototype [done]
+ ├──> N1 Written assessment package [authored; DOCX visual QA pending]
+ ├──> N2 Evaluation and KPI package [done: 6/6 offline cases]
+ ├──> N3 External signal integrations [done and locally verified]
+ └──> N4 Enable gate and run live OpenAI smoke [awaiting explicit paid-request approval]
           │
-          └──> N5 Complete end-to-end scenario verification
+          └──> N5 Complete unknown-incident end-to-end verification [blocked by N4]
                     │
           N1 + N2 + N5 ──> N6 Railway deployment and public-access verification
-                                      │
-                                      └──> N7 Final submission bundle / optional video
+                              [configuration preparation local; public/secret changes require approval]
 ```
 
 Completion evidence for each node:
 
-- `N1`: a self-contained 2–4 page proposal mapped to every mandatory deliverable.
-- `N2`: repeatable eval command, measured results, KPI definitions, and model cost/latency decision.
-- `N3`: at least one authenticated external-signal adapter plus normalized contract and failure tests.
+- `N1`: authored in Markdown and DOCX; rendering must be visually inspected before the DOCX is treated as submission-ready.
+- `N2`: complete with a six-case golden set, repeatable offline command, 6/6 measured result, KPI definitions, and model cost/latency budget.
+- `N3`: complete with an authenticated external-signal API/CLI, six normalized signal types, persistence, context collection, dashboard metric, failure tests, and a locally verified catalog-bypass incident.
 - `N4`: enable the runtime gate for one approved real request proving structured output, request ID, token usage, and redaction boundaries.
 - `N5`: baseline → known catalog incident → recovery and baseline → unknown OpenAI incident → recovery, with screenshots/log evidence.
 - `N6`: healthy Railway services, protected public URLs, PostgreSQL persistence, and rollback evidence.
-- `N7`: repository link, written proposal, demo URLs, and optional walkthrough packaged for submission.
+
+### Evaluation and submission artifacts
+
+- `docs/submission/unlimit-ai-assessment-proposal.md` — readable source proposal.
+- `docs/submission/unlimit-ai-assessment-proposal.docx` — generated proposal; visual render QA is still required.
+- `docs/evaluation/evaluation-plan.md` — KPIs, quality gates, latency/cost budgets, and improvement loop.
+- `docs/evaluation/offline-eval-results.json` — current deterministic result: 6/6 cases passed without network or paid model use.
+- `tests/fixtures/golden_incidents.json` — versioned golden incident set.
 
 ## Railway deployment
 
@@ -223,4 +229,4 @@ Only Grafana, Prometheus, and the Incident API/UI should receive public domains.
 
 ## Verification boundary
 
-The repository has 66 passing automated tests. The post-change Compose build, healthy baseline, UI controls, Grafana provisioning, Prometheus targets, legacy-data migration, and the known catalog incident/recovery flow have been verified locally. These checks keep the OpenAI network gate disabled; the approved live OpenAI branch and its complete recovery capture remain `N4`–`N5`.
+The repository has 69 passing automated tests. The post-change Compose build, healthy baseline, UI controls, nine-panel incident dashboard, Prometheus targets, external-signal ingestion, PostgreSQL migration, and a known catalog incident/recovery flow with external evidence have been verified locally. These checks keep the OpenAI network gate disabled; the approved live OpenAI branch and its complete recovery capture remain `N4`–`N5`. Railway configuration can be validated locally, but secret upload, public domains, and deployment verification remain protected `N6` actions.

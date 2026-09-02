@@ -56,6 +56,15 @@ class FeedbackVerdict(StrEnum):
     INCORRECT = "incorrect"
 
 
+class ExternalSignalType(StrEnum):
+    PROVIDER_STATUS = "provider-status"
+    SUPPORT_TICKET = "support-ticket"
+    SLACK_ESCALATION = "slack-escalation"
+    EMAIL_ESCALATION = "email-escalation"
+    MERCHANT_COMPLAINT = "merchant-complaint"
+    OPERATIONS_REPORT = "operations-report"
+
+
 class CatalogAuditAction(StrEnum):
     VERSION_CREATED = "version-created"
     VERSION_ACTIVATED = "version-activated"
@@ -131,6 +140,31 @@ class ProviderEvent(BaseModel):
 
     @model_validator(mode="after")
     def validate_observed_at(self) -> "ProviderEvent":
+        if self.observed_at.tzinfo is None:
+            raise ValueError("observed_at must be timezone-aware")
+        return self
+
+
+class ExternalSignal(BaseModel):
+    """Sanitized operational context from systems outside the payment path."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    signal_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
+    provider: ProviderId
+    signal_type: ExternalSignalType
+    observed_at: datetime = Field(default_factory=utc_now)
+    title: str = Field(min_length=1, max_length=120)
+    summary: str = Field(min_length=1, max_length=600)
+    source_ref: str = Field(min_length=1, max_length=200)
+    severity: IncidentSeverity = IncidentSeverity.WARNING
+    confidence: float = Field(default=0.7, ge=0, le=1)
+    reported_count: int = Field(default=1, ge=1, le=100_000)
+    region: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
+    contains_customer_data: Literal[False] = False
+
+    @model_validator(mode="after")
+    def validate_observed_at(self) -> "ExternalSignal":
         if self.observed_at.tzinfo is None:
             raise ValueError("observed_at must be timezone-aware")
         return self
@@ -245,6 +279,7 @@ class EvidenceBundle(BaseModel):
     signals: tuple[AlertSignal, ...] = Field(min_length=1, max_length=8)
     alert: AlertEvidence | None = None
     provider_events: tuple[ProviderEvent, ...] = Field(default=(), max_length=20)
+    external_signals: tuple[ExternalSignal, ...] = Field(default=(), max_length=12)
     source: str = Field(min_length=1, max_length=48)
     collected_at: datetime = Field(default_factory=utc_now)
 

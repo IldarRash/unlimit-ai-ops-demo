@@ -1,0 +1,121 @@
+{
+  "scope": "offline deterministic routing and schema evaluation; no OpenAI request",
+  "cases": 6,
+  "passed": 6,
+  "pass_rate": 1.0,
+  "actual_offline_analyzer_calls": 4,
+  "expected_openai_routes": 4,
+  "offline_latency_ms": {
+    "mean": 0.372,
+    "p95": 1.826
+  },
+  "results": [
+    {
+      "id": "healthy-baseline",
+      "passed": true,
+      "checks": {
+        "signals": true,
+        "severity": true,
+        "route": true,
+        "cause_category": true
+      },
+      "actual": {
+        "signals": [],
+        "severity": "info",
+        "route": "none",
+        "cause_category": null
+      }
+    },
+    {
+      "id": "known-provider-error",
+      "passed": true,
+      "checks": {
+        "signals": true,
+        "severity": true,
+        "route": true,
+        "cause_category": true
+      },
+      "actual": {
+        "signals": [
+          "error-rate"
+        ],
+        "severity": "critical",
+        "route": "catalog",
+        "cause_category": "technical"
+      }
+    },
+    {
+      "id": "unknown-provider-error-with-status",
+      "passed": true,
+      "checks": {
+        "signals": true,
+        "severity": true,
+        "route": true,
+        "cause_category": true
+      },
+      "actual": {
+        "signals": [
+          "error-rate"
+        ],
+        "severity": "critical",
+        "route": "openai",
+        "cause_category": "technical"
+      }
+    },
+    {
+      "id": "business-decline-with-merchant-reports",
+      "passed": true,
+      "checks": {
+        "signals": true,
+        "severity": true,
+        "route": true,
+        "cause_category": true
+      },
+      "actual": {
+        "signals": [
+          "decline-rate"
+        ],
+        "severity": "critical",
+        "route": "openai",
+        "cause_category": "business"
+      }
+    },
+    {
+      "id": "latency-and-timeout",
+      "passed": true,
+      "checks": {
+        "signals": true,
+        "severity": true,
+        "route": true,
+        "cause_category": true
+      },
+      "actual": {
+        "signals": [
+          "latency",
+          "timeout-rate"
+        ],
+        "severity": "critical",
+        "route": "openai",
+        "cause_category": "technical"
+      }
+    },
+    {
+      "id": "health-down-low-volume",
+      "passed": true,
+      "checks": {
+        "signals": true,
+        "severity": true,
+        "route": true,
+        "cause_category": true
+      },
+      "actual": {
+        "signals": [
+          "health"
+        ],
+        "severity": "critical",
+        "route": "openai",
+        "cause_category": "technical"
+      }
+    }
+  ]
+}

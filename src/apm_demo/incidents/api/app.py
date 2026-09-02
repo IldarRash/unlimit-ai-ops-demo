@@ -44,6 +44,7 @@ from apm_demo.incidents.domain import (
     AlertmanagerWebhook,
     CatalogAuditEvent,
     ClassificationKind,
+    ExternalSignal,
     IncidentAuditEvent,
     IncidentFeedback,
     IncidentRecord,
@@ -315,6 +316,41 @@ def create_app(
             provider=stored.provider.value, outcome=stored.outcome.value
         ).inc()
         return stored
+
+    @app.post(
+        "/api/v1/external-signals",
+        response_model=ExternalSignal,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def ingest_external_signal(
+        signal: ExternalSignal, request: Request
+    ) -> ExternalSignal:
+        _require_network(
+            request,
+            trusted_networks,
+            enforce=resolved_settings.enforce_ingress_networks,
+        )
+        _require_bearer(request, resolved_settings.external_signal_token_value())
+        stored = await container.external_signals.append_external_signal(signal)
+        container.pipeline_metrics.external_signals.labels(
+            provider=stored.provider.value,
+            signal_type=stored.signal_type.value,
+        ).inc()
+        return stored
+
+    @app.get(
+        "/api/v1/external-signals",
+        response_model=list[ExternalSignal],
+    )
+    async def list_external_signals(
+        request: Request,
+        provider: ProviderId,
+        limit: int = Query(default=12, ge=1, le=100),
+    ) -> tuple[ExternalSignal, ...]:
+        _require_bearer(request, resolved_settings.external_signal_token_value())
+        return await container.external_signals.list_recent_external_signals(
+            provider, limit=limit
+        )
 
     @app.get("/api/v1/incidents", response_model=list[IncidentRecord])
     async def list_incidents(

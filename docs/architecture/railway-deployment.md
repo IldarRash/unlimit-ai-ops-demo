@@ -28,14 +28,15 @@ The runtime flow is:
 2. Prometheus scrapes emulator, generator, and incident-pipeline metrics.
 3. Prometheus evaluates alert rules and sends firing/resolved alerts to the private Alertmanager service.
 4. Alertmanager calls the Incident API through Railway private networking.
-5. The Incident API uses deterministic provider knowledge first; unknown failures receive bounded metric and event context and can be analyzed by OpenAI.
-6. Incidents, evidence, audit records, deliveries, and operator feedback are stored in PostgreSQL without automatic expiry.
-7. Grafana reads Prometheus through private networking and provides the monitoring dashboard.
+5. Authenticated adapters can add sanitized provider-status, support, Slack/email, merchant, and operations signals to the same provider-scoped evidence window.
+6. The Incident API uses deterministic provider knowledge first; unknown failures receive bounded metric, provider-event, and external-signal context and can be analyzed by OpenAI.
+7. Incidents, evidence, audit records, deliveries, and operator feedback are stored in PostgreSQL without automatic expiry.
+8. Grafana reads Prometheus through private networking and provides the monitoring dashboard.
 
 ## Access boundary
 
 - Incident UI and ordinary Incident API routes use HTTP Basic authentication.
-- Alertmanager ingestion, provider-event ingestion, catalog administration, and Prometheus scraping of Incident API metrics each use a separate bearer token.
+- Alertmanager ingestion, provider-event ingestion, external-signal ingestion, catalog administration, and Prometheus scraping of Incident API metrics each use a separate bearer token in Railway.
 - Railway does not publish a stable private-service CIDR for application allowlists. The Railway deployment therefore disables the optional source-IP guard and treats each route's dedicated high-entropy bearer token as the authoritative control. Local/Compose operation retains source-network validation by default.
 - Prometheus public access uses its native web configuration with a bcrypt password hash.
 - Grafana anonymous access is disabled; its administrator account is configured from Railway secrets.
@@ -58,11 +59,30 @@ The following values are never committed and require just-in-time approval befor
 - `APM_INCIDENT_METRICS_TOKEN`
 - `APM_INCIDENT_ALERTMANAGER_TOKEN`
 - `APM_INCIDENT_PROVIDER_EVENT_TOKEN`
+- `APM_INCIDENT_EXTERNAL_SIGNAL_TOKEN`
 - `APM_INCIDENT_CATALOG_ADMIN_TOKEN`
 - `OPENAI_API_KEY`
 - Grafana administrator credentials generated for this deployment
 
 Railway reference variables are used for service-to-service URLs and managed PostgreSQL's `DATABASE_URL` so that derived infrastructure values are not copied as secrets.
+
+## Required reference and control variables
+
+| Service | Variable | Railway value/source |
+| --- | --- | --- |
+| `traffic-generator` | `APM_PROVIDER_BASE_URL` | private URL for `provider-emulator:8000` |
+| `traffic-generator` | `APM_INCIDENT_API_URL` | private URL for `incident-api:8002` |
+| `traffic-generator` | `APM_PROVIDER_EVENT_TOKEN` | same secret value as Incident API provider-event token |
+| `grafana` | `PROMETHEUS_URL` | private URL for `prometheus:9090` |
+| `incident-api` | `APM_INCIDENT_METRICS_MODE` | `prometheus` |
+| `incident-api` | `APM_INCIDENT_PROMETHEUS_URL` | private URL for `prometheus:9090` |
+| `incident-api` | `APM_INCIDENT_TRAFFIC_GENERATOR_URL` | private URL for `traffic-generator:8001` |
+| `incident-api` | `APM_INCIDENT_PROVIDER_EMULATOR_URL` | private URL for `provider-emulator:8000` |
+| `incident-api` | `APM_INCIDENT_GRAFANA_PUBLIC_URL` | approved Grafana public URL after domain creation |
+| `incident-api` | `APM_INCIDENT_ENFORCE_INGRESS_NETWORKS` | `false`; bearer tokens remain mandatory |
+| `incident-api` | `APM_INCIDENT_OPENAI_MODEL` | `gpt-5.4-mini` |
+| `incident-api` | `APM_INCIDENT_OPENAI_REQUESTS_ENABLED` | `false` until the separately approved live smoke |
+| `incident-api` | `DATABASE_URL` | managed PostgreSQL reference variable |
 
 ## Deployment sequence
 

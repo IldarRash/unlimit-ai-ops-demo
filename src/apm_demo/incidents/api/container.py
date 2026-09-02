@@ -27,6 +27,7 @@ from apm_demo.incidents.infrastructure import (
 )
 from apm_demo.incidents.ports.repositories import (
     AuditLog,
+    ExternalSignalRepository,
     FeedbackRepository,
     IncidentRepository,
     KnownErrorCatalog,
@@ -46,6 +47,7 @@ class IncidentContainer:
     incidents: IncidentRepository
     audit_log: AuditLog
     provider_events: ProviderEventRepository
+    external_signals: ExternalSignalRepository
     catalog: KnownErrorCatalog
     feedback: FeedbackRepository
     event_bus: IncidentEventBus
@@ -123,8 +125,10 @@ def build_container(
         incidents=store,
         audit_log=store,
         provider_events=store,
+        external_signals=store,
         classifier=classifier,
         event_limit=settings.provider_event_limit,
+        external_signal_limit=settings.external_signal_limit,
     )
     alert_pipeline = AlertIncidentPipeline(
         metrics=metrics,
@@ -132,9 +136,11 @@ def build_container(
         classifier=classifier,
         incidents=store,
         provider_events=store,
+        external_signals=store,
         deliveries=store,
         events=event_bus,
         event_limit=settings.provider_event_limit,
+        external_signal_limit=settings.external_signal_limit,
         window_seconds=settings.analysis_window_seconds,
     )
     return IncidentContainer(
@@ -145,6 +151,7 @@ def build_container(
         incidents=store,
         audit_log=store,
         provider_events=store,
+        external_signals=store,
         catalog=store,
         feedback=store,
         event_bus=event_bus,
