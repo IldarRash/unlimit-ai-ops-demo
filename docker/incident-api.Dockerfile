@@ -7,6 +7,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY docker/incident-api-entrypoint.sh /usr/local/bin/incident-api-entrypoint
 
 RUN pip install --no-cache-dir .
 
@@ -17,4 +18,4 @@ USER appuser
 
 EXPOSE 8002
 
-CMD ["python", "-m", "apm_demo.incidents.api"]
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/incident-api-entrypoint"]

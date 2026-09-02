@@ -115,7 +115,7 @@ When Docker is available:
 docker compose up --build
 ```
 
-Copy `.env.example` to the ignored `.env`, replace its placeholder credentials, and create the three ignored token files described in `secrets/README.md` before starting Compose.
+Copy `.env.example` to the ignored `.env`, replace its placeholder credentials, and create the four ignored secret files described in `secrets/README.md` before starting Compose. Local Compose uses PostgreSQL; the Incident API constructs its connection URL from the mounted database-password secret without logging it.
 
 - Incident console: `http://localhost:8002`
 - Grafana: `http://localhost:3000`
@@ -137,4 +137,4 @@ No secrets belong in Git. Uploads of integration credentials, operator/Grafana c
 
 ## Verification boundary
 
-The repository currently has 54 passing domain, adapter, orchestration, API, access-control, configuration, and static UI tests. Docker Compose configuration and shell syntax are validated without starting containers. Full image/runtime and deployed end-to-end verification remains a Railway rollout gate because the host Docker/WSL2 runtime is unavailable.
+The repository currently has 56 passing domain, adapter, orchestration, API, access-control, configuration, and static UI tests. The complete local Docker Compose runtime has been verified with PostgreSQL persistence, healthy Prometheus scrape targets, provisioned Grafana dashboards, Alertmanager webhook delivery, catalog-based handling of a known provider response, and mock analysis of an unknown incident. Railway deployment and the first paid OpenAI-backed analysis remain separate rollout gates.

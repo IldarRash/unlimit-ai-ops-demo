@@ -8,7 +8,7 @@ from prometheus_client import CollectorRegistry
 from apm_demo.common.contracts import HealthMode
 from apm_demo.provider_emulator.app import create_app
 from apm_demo.provider_emulator.metrics import ProviderMetrics
-from apm_demo.provider_emulator.state import ProviderRuntime
+from apm_demo.provider_emulator.state import BASELINE_BEHAVIORS, ProviderRuntime
 
 
 class FixedRandom:
@@ -87,6 +87,11 @@ def test_invalid_partial_distribution_is_rejected() -> None:
 
     assert response.status_code == 422
     assert "must sum to 1.0" in str(response.json())
+
+
+def test_baseline_operational_failure_rates_stay_below_alert_threshold() -> None:
+    for behavior in BASELINE_BEHAVIORS.values():
+        assert behavior.provider_error_rate + behavior.timeout_rate < 0.05
 
 
 @pytest.mark.parametrize(

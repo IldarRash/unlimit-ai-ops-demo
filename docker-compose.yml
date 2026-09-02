@@ -1,6 +1,27 @@
 name: unlimit-ai-ops-demo
 
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: apm_demo
+      POSTGRES_USER: apm
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    expose:
+      - "5432"
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U apm -d apm_demo
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
   provider-emulator:
     build:
       context: .
@@ -109,7 +130,11 @@ services:
       APM_INCIDENT_ANALYSIS_WINDOW_SECONDS: ${APM_INCIDENT_ANALYSIS_WINDOW_SECONDS:-300}
       APM_INCIDENT_REQUEST_TIMEOUT_SECONDS: ${APM_INCIDENT_REQUEST_TIMEOUT_SECONDS:-5}
       APM_INCIDENT_OPENAI_MODEL: ${APM_INCIDENT_OPENAI_MODEL:-gpt-5.4-mini}
-      APM_INCIDENT_DATABASE_PATH: /data/incidents.db
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: apm_demo
+      DATABASE_USER: apm
+      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
       APM_INCIDENT_ALERTMANAGER_TOKEN_FILE: /run/secrets/alertmanager_webhook_token
       APM_INCIDENT_PROVIDER_EVENT_TOKEN_FILE: /run/secrets/provider_event_token
       APM_INCIDENT_CATALOG_ADMIN_TOKEN_FILE: /run/secrets/catalog_admin_token
@@ -120,13 +145,16 @@ services:
     ports:
       - "8002:8002"
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
         - python
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=2)
+        - import urllib.request; urllib.request.urlopen('http://localhost:8002/ready', timeout=2)
       interval: 5s
       timeout: 3s
       retries: 10
@@ -135,14 +163,13 @@ services:
       - alertmanager_webhook_token
       - provider_event_token
       - catalog_admin_token
-    volumes:
-      - incident-data:/data
+      - postgres_password
 
 volumes:
   prometheus-data:
   grafana-data:
   alertmanager-data:
-  incident-data:
+  postgres-data:
 
 secrets:
   alertmanager_webhook_token:
@@ -151,3 +178,5 @@ secrets:
     file: ./secrets/provider_event_token
   catalog_admin_token:
     file: ./secrets/catalog_admin_token
+  postgres_password:
+    file: ./secrets/postgres_password

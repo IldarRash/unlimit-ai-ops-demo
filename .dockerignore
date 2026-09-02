@@ -6,6 +6,7 @@
 __pycache__
 *.pyc
 .venv
+.env*
 .idea
 .test-data
 data

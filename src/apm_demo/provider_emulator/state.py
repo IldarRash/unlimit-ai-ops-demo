@@ -37,11 +37,11 @@ BASELINE_BEHAVIORS: dict[ProviderId, ProviderBehavior] = {
     ProviderId.ORBIT_WALLET: ProviderBehavior(
         base_latency_ms=340,
         jitter_ms=100,
-        timeout_rate=0.02,
-        success_rate=0.90,
+        timeout_rate=0.01,
+        success_rate=0.92,
         soft_decline_rate=0.05,
         hard_decline_rate=0.02,
-        provider_error_rate=0.03,
+        provider_error_rate=0.01,
     ),
 }
 

@@ -18,5 +18,6 @@ prometheus-data/
 grafana-data/
 data/
 .test-data/
-secrets/*_token
-secrets/*.local
+secrets/*
+!secrets/*.example
+!secrets/README.md
