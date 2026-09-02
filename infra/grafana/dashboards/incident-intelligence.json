@@ -4,133 +4,126 @@
   "panels": [
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {"decimals": 0, "unit": "short"},
+        "overrides": []
+      },
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 0},
       "id": 1,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
       "targets": [
         {
-          "expr": "sum by (outcome) (rate(incident_pipeline_deliveries_total[5m]))",
-          "legendFormat": "{{outcome}}",
+          "expr": "sum(increase(incident_pipeline_incidents_total[$__range])) or vector(0)",
+          "instant": true,
+          "legendFormat": "Unique incidents",
           "refId": "A"
         }
       ],
-      "title": "Alertmanager delivery outcomes",
-      "type": "timeseries"
+      "title": "Unique incidents in selected period",
+      "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "fieldConfig": {
+        "defaults": {"decimals": 0, "unit": "short"},
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 6},
       "id": 2,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "options": {
+        "displayMode": "basic",
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
       "targets": [
         {
-          "expr": "sum by (classification) (increase(incident_pipeline_alerts_total{classification=~\"known|unknown|unavailable\"}[15m]))",
-          "legendFormat": "{{classification}}",
+          "expr": "sum by (provider) (increase(incident_pipeline_incidents_total[$__range]))",
+          "instant": true,
+          "legendFormat": "{{provider}}",
           "refId": "A"
         }
       ],
-      "title": "Incident classifications: catalog, unknown, unavailable",
-      "type": "timeseries"
+      "title": "Incidents by provider",
+      "type": "bargauge"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "fieldConfig": {
+        "defaults": {"decimals": 0, "unit": "short"},
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 6},
       "id": 3,
-      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "options": {
+        "displayMode": "basic",
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, rate(incident_pipeline_processing_seconds_bucket[5m]))",
-          "legendFormat": "p95",
+          "expr": "sum by (incident_type) (increase(incident_pipeline_incidents_total[$__range]))",
+          "instant": true,
+          "legendFormat": "{{incident_type}}",
           "refId": "A"
         }
       ],
-      "title": "Pipeline processing p95",
-      "type": "timeseries"
+      "title": "Incidents by error type",
+      "type": "bargauge"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"mappings": [], "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 8},
+      "fieldConfig": {
+        "defaults": {"decimals": 0, "unit": "short"},
+        "overrides": []
+      },
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 15},
       "id": 4,
-      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto"},
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true
+      },
       "targets": [
-        {"expr": "incident_pipeline_llm_circuit_open", "refId": "A"}
+        {
+          "expr": "sum by (provider, incident_type) (increase(incident_pipeline_incidents_total[$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{provider}} · {{incident_type}}",
+          "refId": "A"
+        }
       ],
-      "title": "LLM circuit open",
-      "type": "stat"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"mappings": [], "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 8},
-      "id": 5,
-      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto"},
-      "targets": [
-        {"expr": "incident_pipeline_sse_clients", "refId": "A"}
-      ],
-      "title": "Connected operator streams",
-      "type": "stat"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
-      "id": 6,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
-      "targets": [
-        {"expr": "sum by (provider, outcome) (increase(incident_pipeline_provider_events_total[15m]))", "legendFormat": "{{provider}} · {{outcome}}", "refId": "A"}
-      ],
-      "title": "Provider-event ingress by outcome",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
-      "id": 7,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
-      "targets": [
-        {"expr": "sum by (outcome) (increase(incident_pipeline_deliveries_total[15m]))", "legendFormat": "{{outcome}}", "refId": "A"},
-        {"expr": "sum by (reason) (increase(incident_pipeline_rejections_total[15m]))", "legendFormat": "rejected · {{reason}}", "refId": "B"}
-      ],
-      "title": "Alert delivery and ingress rejections",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
-      "id": 8,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
-      "targets": [
-        {"expr": "sum by (provider, outcome, status) (increase(apm_generator_provider_events_total[15m]))", "legendFormat": "{{provider}} · {{outcome}} · {{status}}", "refId": "A"}
-      ],
-      "title": "Provider-event delivery status",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
-      "id": 9,
-      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
-      "targets": [
-        {"expr": "sum by (provider, signal_type) (increase(incident_pipeline_external_signals_total[15m]))", "legendFormat": "{{provider}} · {{signal_type}}", "refId": "A"}
-      ],
-      "title": "External operational signal ingress",
-      "type": "timeseries"
+      "title": "Incident count by provider and error type",
+      "type": "table"
     }
   ],
   "refresh": "5s",
   "schemaVersion": 40,
-  "tags": ["incident-intelligence", "alertmanager", "llm"],
+  "tags": ["incident-intelligence", "incident-counts"],
   "templating": {"list": []},
   "time": {"from": "now-1h", "to": "now"},
   "timezone": "browser",
   "title": "Incident Intelligence Pipeline",
   "uid": "incident-intelligence-pipeline",
-  "version": 1
+  "version": 2
 }

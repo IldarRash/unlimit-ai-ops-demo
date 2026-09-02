@@ -62,6 +62,7 @@ class AlertIncidentPipeline:
         event_limit: int = 20,
         external_signal_limit: int = 12,
         window_seconds: int = 300,
+        on_incident_created: Callable[[IncidentRecord], None] | None = None,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
         self._metrics = metrics
@@ -75,6 +76,7 @@ class AlertIncidentPipeline:
         self._event_limit = event_limit
         self._external_signal_limit = external_signal_limit
         self._window_seconds = window_seconds
+        self._on_incident_created = on_incident_created or (lambda incident: None)
         self._now = now
 
     async def ingest(self, webhook: AlertmanagerWebhook) -> AlertIngestResult:
@@ -274,6 +276,7 @@ class AlertIncidentPipeline:
                 "severity": severity.value,
             },
         )
+        self._on_incident_created(stored)
         await self._events.publish(stored)
         return stored
 

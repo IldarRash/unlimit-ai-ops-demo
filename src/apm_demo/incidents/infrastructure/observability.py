@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 
+from apm_demo.incidents.domain import IncidentRecord
+
 
 class PipelineMetrics:
     def __init__(self, registry: CollectorRegistry | None = None) -> None:
@@ -16,6 +18,12 @@ class PipelineMetrics:
             "incident_pipeline_alerts_total",
             "Alert processing outcomes.",
             ("status", "classification"),
+            registry=self.registry,
+        )
+        self.incidents = Counter(
+            "incident_pipeline_incidents_total",
+            "Unique incident records created.",
+            ("provider", "incident_type"),
             registry=self.registry,
         )
         self.rejections = Counter(
@@ -57,3 +65,12 @@ class PipelineMetrics:
             "Whether the LLM circuit breaker is open.",
             registry=self.registry,
         )
+
+    def record_incident_created(self, incident: IncidentRecord) -> None:
+        incident_type = "+".join(
+            sorted(signal.signal_type.value for signal in incident.evidence.signals)
+        )
+        self.incidents.labels(
+            provider=incident.provider.value,
+            incident_type=incident_type or "unclassified",
+        ).inc()

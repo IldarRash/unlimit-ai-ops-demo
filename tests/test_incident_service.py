@@ -74,6 +74,7 @@ async def test_service_correlates_repeated_incident_and_records_audit() -> None:
     repository = InMemoryIncidentRepository()
     audit_log = InMemoryAuditLog()
     classifier = FakeClassifier()
+    created_incidents = []
     service = AnalyzeProviderIncident(
         metrics=DeterministicMetricsSource(
             {ProviderId.ATLAS_PAY: degraded_snapshot()}
@@ -82,6 +83,7 @@ async def test_service_correlates_repeated_incident_and_records_audit() -> None:
         classifier=classifier,
         incidents=repository,
         audit_log=audit_log,
+        on_incident_created=created_incidents.append,
     )
 
     first = await service.execute(ProviderId.ATLAS_PAY)
@@ -93,6 +95,7 @@ async def test_service_correlates_repeated_incident_and_records_audit() -> None:
     assert second.occurrences == 2
     assert len(await repository.list_recent()) == 1
     assert classifier.calls == 1
+    assert [incident.incident_id for incident in created_incidents] == [first.incident_id]
     assert [event.event_type for event in await audit_log.list_for_incident(first.incident_id)] == [
         AuditEventType.CREATED,
         AuditEventType.CORRELATED,

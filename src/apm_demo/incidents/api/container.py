@@ -147,6 +147,7 @@ def build_container(
         external_signals=store,
         event_limit=settings.provider_event_limit,
         external_signal_limit=settings.external_signal_limit,
+        on_incident_created=pipeline_metrics.record_incident_created,
     )
     alert_pipeline = AlertIncidentPipeline(
         metrics=metrics,
@@ -160,6 +161,7 @@ def build_container(
         event_limit=settings.provider_event_limit,
         external_signal_limit=settings.external_signal_limit,
         window_seconds=settings.analysis_window_seconds,
+        on_incident_created=pipeline_metrics.record_incident_created,
     )
     return IncidentContainer(
         settings=settings,

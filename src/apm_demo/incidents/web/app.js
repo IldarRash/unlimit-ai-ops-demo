@@ -9,9 +9,7 @@ const state = {
 };
 
 const elements = {
-  form: document.querySelector("#analyze-form"),
   provider: document.querySelector("#provider"),
-  analyzeButton: document.querySelector("#analyze-button"),
   trafficButton: document.querySelector("#traffic-button"),
   trafficRps: document.querySelector("#traffic-rps"),
   actionStatus: document.querySelector("#action-status"),
@@ -118,15 +116,11 @@ function showToast(message, tone = "info") {
 
 function setLoading(loading) {
   state.loading = loading;
-  elements.analyzeButton.disabled = loading;
   elements.refreshButton.disabled = loading;
   elements.trafficButton.disabled = loading;
   elements.scenarioControls.querySelectorAll("button").forEach((button) => {
     button.disabled = loading;
   });
-  elements.analyzeButton.querySelector(".button-label").textContent = loading
-    ? "Analyzing…"
-    : "Analyze now";
 }
 
 async function loadRuntime() {
@@ -214,30 +208,6 @@ async function loadSelectedAudit() {
   state.audit = state.selectedId
     ? await request(`/api/v1/incidents/${encodeURIComponent(state.selectedId)}/audit`)
     : [];
-}
-
-async function analyzeProvider(event) {
-  event.preventDefault();
-  setLoading(true);
-  try {
-    const result = await request("/api/v1/incidents/analyze", {
-      method: "POST",
-      body: JSON.stringify({ provider: elements.provider.value }),
-    });
-    if (!result.detected) {
-      setActionStatus(`${labels[elements.provider.value]} is healthy — no anomaly in the current evidence window.`, "success");
-      showToast(`${labels[elements.provider.value]} is within configured thresholds.`);
-      return;
-    }
-    await loadIncidents(result.incident.incident_id);
-    setActionStatus(`Incident assessment complete: ${labels[result.incident.analysis.classification].toLowerCase()}.`, "success");
-    showToast(`Incident ${result.incident.occurrences > 1 ? "correlated" : "created"}.`);
-  } catch (error) {
-    setActionStatus(error.message, "error");
-    showToast(error.message, "error");
-  } finally {
-    setLoading(false);
-  }
 }
 
 async function toggleTraffic() {
@@ -731,7 +701,6 @@ function metric(label, value, bad) {
   return `<div class="metric"><dt>${escapeHtml(label)}</dt><dd data-state="${bad ? "bad" : "normal"}">${escapeHtml(value)}</dd></div>`;
 }
 
-elements.form.addEventListener("submit", analyzeProvider);
 elements.trafficButton.addEventListener("click", toggleTraffic);
 elements.trafficRps.addEventListener("change", updateRunningTrafficRate);
 elements.scenarioControls.addEventListener("click", (event) => {

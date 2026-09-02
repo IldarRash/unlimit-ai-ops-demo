@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from prometheus_client import CollectorRegistry, generate_latest
 
 from apm_demo.common.contracts import PaymentOutcome, ProviderId
 from apm_demo.incidents.application.classification import IncidentClassifier
@@ -31,6 +32,7 @@ from apm_demo.incidents.infrastructure import (
     DeterministicMetricsSource,
     SQLiteIncidentStore,
 )
+from apm_demo.incidents.infrastructure.observability import PipelineMetrics
 
 
 START = datetime(2026, 8, 1, 12, tzinfo=timezone.utc)
@@ -122,7 +124,9 @@ def webhook(
 
 
 def pipeline(
-    store: SQLiteIncidentStore, analyzer: CountingAnalyzer
+    store: SQLiteIncidentStore,
+    analyzer: CountingAnalyzer,
+    on_incident_created=None,
 ) -> AlertIncidentPipeline:
     return AlertIncidentPipeline(
         metrics=DeterministicMetricsSource({ProviderId.ATLAS_PAY: snapshot()}),
@@ -135,6 +139,7 @@ def pipeline(
         external_signals=store,
         deliveries=store,
         events=IncidentEventBus(),
+        on_incident_created=on_incident_created,
     )
 
 
@@ -244,7 +249,8 @@ async def test_unknown_error_is_analyzed_once_then_resolved_and_reopened(tmp_pat
             processing_time_ms=1_100,
         )
     )
-    service = pipeline(store, analyzer)
+    metrics = PipelineMetrics(CollectorRegistry())
+    service = pipeline(store, analyzer, metrics.record_incident_created)
 
     firing = await service.ingest(webhook())
     created = await store.get(firing.incident_ids[0])
@@ -266,6 +272,11 @@ async def test_unknown_error_is_analyzed_once_then_resolved_and_reopened(tmp_pat
     assert reopened.status.value == "open"
     assert reopened.occurrences == 2
     assert analyzer.calls == 2
+    metric_output = generate_latest(metrics.registry).decode("utf-8")
+    assert (
+        'incident_pipeline_incidents_total{incident_type="error-rate+latency+timeout-rate",provider="atlas-pay"} 1.0'
+        in metric_output
+    )
 
 
 @pytest.mark.asyncio

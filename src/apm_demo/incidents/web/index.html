@@ -45,7 +45,7 @@
       </section>
 
       <section class="operator-toolbar" aria-label="Demo operator controls">
-        <form id="analyze-form" class="analyze-control">
+        <div class="analyze-control">
           <label for="provider">Provider</label>
           <select id="provider" name="provider">
             <option value="atlas-pay">AtlasPay</option>
@@ -58,8 +58,7 @@
             <span id="traffic-rps-help">RPS</span>
           </div>
           <button id="traffic-button" class="button button-secondary" type="button"><span class="traffic-label">Start traffic</span></button>
-          <button id="analyze-button" class="button button-primary" type="submit"><span class="button-label">Analyze now</span></button>
-        </form>
+        </div>
         <div class="toolbar-secondary">
           <div id="action-status" class="action-status" role="status" aria-live="polite">Loading controls…</div>
           <div class="dashboard-links" aria-label="Dashboards">

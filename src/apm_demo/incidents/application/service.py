@@ -43,6 +43,7 @@ class AnalyzeProviderIncident:
         external_signals: ExternalSignalRepository | None = None,
         event_limit: int = 20,
         external_signal_limit: int = 12,
+        on_incident_created: Callable[[IncidentRecord], None] | None = None,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
         self._metrics = metrics
@@ -54,6 +55,7 @@ class AnalyzeProviderIncident:
         self._classifier = classifier
         self._event_limit = event_limit
         self._external_signal_limit = external_signal_limit
+        self._on_incident_created = on_incident_created or (lambda incident: None)
         self._now = now
 
     async def execute(
@@ -113,6 +115,7 @@ class AnalyzeProviderIncident:
             last_seen_at=observed_at,
         )
         stored = await self._incidents.save(incident)
+        self._on_incident_created(stored)
         await self._audit(
             stored.incident_id,
             AuditEventType.CREATED,

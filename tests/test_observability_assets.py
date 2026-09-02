@@ -134,7 +134,7 @@ def test_deployment_assets_use_variable_references_not_credentials() -> None:
     } <= set(services["incident-api"]["requiredVariables"])
 
 
-def test_incident_pipeline_dashboard_covers_operational_signals() -> None:
+def test_incident_dashboard_only_counts_unique_incidents() -> None:
     dashboard = json.loads(
         (ROOT / "infra/grafana/dashboards/incident-intelligence.json").read_text(
             encoding="utf-8"
@@ -145,16 +145,27 @@ def test_incident_pipeline_dashboard_covers_operational_signals() -> None:
         for panel in dashboard["panels"]
         for target in panel.get("targets", [])
     )
+    panels = dashboard["panels"]
+    titles = {panel["title"] for panel in panels}
 
     assert dashboard["uid"] == "incident-intelligence-pipeline"
-    assert "incident_pipeline_deliveries_total" in expressions
-    assert "incident_pipeline_alerts_total" in expressions
-    assert "incident_pipeline_processing_seconds_bucket" in expressions
-    assert "incident_pipeline_llm_circuit_open" in expressions
-    assert "incident_pipeline_provider_events_total" in expressions
-    assert "incident_pipeline_rejections_total" in expressions
-    assert "apm_generator_provider_events_total" in expressions
-    assert "incident_pipeline_external_signals_total" in expressions
+    assert titles == {
+        "Unique incidents in selected period",
+        "Incidents by provider",
+        "Incidents by error type",
+        "Incident count by provider and error type",
+    }
+    assert all(
+        panel["fieldConfig"]["defaults"]["unit"] == "short"
+        and panel["fieldConfig"]["defaults"]["decimals"] == 0
+        for panel in panels
+    )
+    assert expressions.count("incident_pipeline_incidents_total") == 4
+    assert "[$__range]" in expressions
+    assert "rate(" not in expressions
+    assert "incident_pipeline_alerts_total" not in expressions
+    assert "incident_pipeline_deliveries_total" not in expressions
+    assert "incident_pipeline_processing_seconds" not in expressions
 
 
 def test_business_decline_alert_separates_commercial_from_technical_failures() -> None:
@@ -214,3 +225,5 @@ def test_incident_console_exposes_every_operator_scenario() -> None:
     assert button_scenarios == {
         scenario.value for scenario in ScenarioName if scenario is not ScenarioName.NORMAL
     }
+    assert "Analyze now" not in page
+    assert "analyze-button" not in page

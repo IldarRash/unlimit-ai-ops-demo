@@ -12,7 +12,6 @@ Traffic generator
       │
       └──> Prometheus metrics ──> alert rules ──> Alertmanager
                                           │
-Manual Analyze now ────────────────────────┤
                                           ▼
                                   Evidence collection
                          metrics + alerts + provider events
@@ -107,7 +106,7 @@ The operator console uses these operational labels and does not expose model or 
 1. The traffic generator continuously sends a weighted healthy baseline to AtlasPay, NovaBank, and OrbitWallet. A selected scenario changes one provider while the other traffic remains healthy.
 2. Prometheus collects request counts, outcome counts, latency histograms, health, and payment-method breakdowns. Only throughput is expressed as RPS; incident impact uses integer request counts.
 3. Non-success provider responses are normalized into allowlisted `ProviderEvent` records. Raw transactions, credentials, and customer data are not stored in the incident evidence.
-4. An Alertmanager webhook or the operator's **Analyze now** action starts the same pipeline.
+4. An Alertmanager webhook starts the incident pipeline after a configured threshold remains active.
 5. The backend collects a bounded evidence bundle: one Prometheus window, detected signals, up to 20 response events matching those signals and that exact window, alert metadata, and sanitized external operational signals. Unrelated declines or errors are not presented as causes of another incident.
 6. Active `response_code_definitions` are resolved from the database. Provider-specific definitions take precedence over global definitions.
 7. Active `known_error_rules` are matched from most specific to least specific.
@@ -191,7 +190,6 @@ Local surfaces:
 | Control | What it does | Expected incident path |
 | --- | --- | --- |
 | **Start/Stop traffic** | Starts or pauses weighted traffic; the RPS field changes its target rate | Healthy baseline creates metrics but no incident |
-| **Analyze now** | Evaluates the selected provider immediately using the same pipeline as an alert | Creates or updates an incident only when a threshold is crossed |
 | **Recover provider** | Restores the selected provider baseline | Prometheus resolves the active alert after recovery is observed |
 | **Known AtlasPay error** | Raises AtlasPay `UPSTREAM_ERROR` responses | Database rule, no OpenAI request |
 | **Unknown OrbitWallet error** | Raises OrbitWallet `UNMAPPED_PROVIDER_FAILURE` responses | One OpenAI report for a new active incident when paid requests are enabled |
