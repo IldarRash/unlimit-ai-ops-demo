@@ -14,6 +14,7 @@ from apm_demo.incidents.application.detection import (
     incident_severity,
 )
 from apm_demo.incidents.application.events import IncidentEventBus
+from apm_demo.incidents.application.evidence import select_incident_provider_events
 from apm_demo.incidents.domain import (
     AlertDeliveryStatus,
     AlertEvidence,
@@ -184,8 +185,16 @@ class AlertIncidentPipeline:
     ) -> EvidenceBundle:
         snapshot, evidence_source = await self._collect_snapshot(provider)
         signals = self._detector.detect(snapshot) or (self._signal_from_alert(alert),)
-        provider_events = await self._provider_events.list_recent_events(
-            provider, limit=self._event_limit
+        collected_at = self._now()
+        recent_provider_events = await self._provider_events.list_recent_events(
+            provider, limit=100
+        )
+        provider_events = select_incident_provider_events(
+            recent_provider_events,
+            snapshot=snapshot,
+            signals=signals,
+            collected_at=collected_at,
+            limit=self._event_limit,
         )
         external_signals = await self._external_signals.list_recent_external_signals(
             provider, limit=self._external_signal_limit
@@ -204,7 +213,7 @@ class AlertIncidentPipeline:
             provider_events=provider_events,
             external_signals=external_signals,
             source=evidence_source,
-            collected_at=self._now(),
+            collected_at=collected_at,
         )
 
     async def _collect_snapshot(

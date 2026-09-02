@@ -5,7 +5,9 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import CollectorRegistry
 
-from apm_demo.common.contracts import HealthMode, ProviderId
+from apm_demo.common.contracts import HealthMode, ProviderId, ScenarioName
+from apm_demo.incidents.application.detection import AnomalyDetector
+from apm_demo.incidents.domain import MetricSnapshot, SignalType
 from apm_demo.provider_emulator.app import create_app
 from apm_demo.provider_emulator.metrics import ProviderMetrics
 from apm_demo.provider_emulator.state import BASELINE_BEHAVIORS, ProviderRuntime
@@ -152,3 +154,121 @@ def test_scenarios_are_reproducible_instead_of_stacking_previous_degradation() -
         BASELINE_BEHAVIORS[ProviderId.ATLAS_PAY].base_latency_ms
     )
     assert response.json()["behavior"]["provider_error_rate"] == 0.45
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scenario", "expected_signal", "forbidden_signals"),
+    [
+        (ScenarioName.NORMAL, None, frozenset(SignalType)),
+        (ScenarioName.RECOVER, None, frozenset(SignalType)),
+        (
+            ScenarioName.SLOW_PROVIDER,
+            SignalType.LATENCY,
+            frozenset(
+                {
+                    SignalType.ERROR_RATE,
+                    SignalType.TIMEOUT_RATE,
+                    SignalType.DECLINE_RATE,
+                    SignalType.HEALTH,
+                }
+            ),
+        ),
+        (
+            ScenarioName.PROVIDER_ERRORS,
+            SignalType.ERROR_RATE,
+            frozenset(
+                {
+                    SignalType.TIMEOUT_RATE,
+                    SignalType.DECLINE_RATE,
+                    SignalType.HEALTH,
+                }
+            ),
+        ),
+        (
+            ScenarioName.UNKNOWN_PROVIDER_ERROR,
+            SignalType.ERROR_RATE,
+            frozenset(
+                {
+                    SignalType.TIMEOUT_RATE,
+                    SignalType.DECLINE_RATE,
+                    SignalType.HEALTH,
+                }
+            ),
+        ),
+        (
+            ScenarioName.BUSINESS_DECLINES,
+            SignalType.DECLINE_RATE,
+            frozenset(
+                {
+                    SignalType.ERROR_RATE,
+                    SignalType.TIMEOUT_RATE,
+                    SignalType.HEALTH,
+                }
+            ),
+        ),
+        (
+            ScenarioName.PROVIDER_TIMEOUT,
+            SignalType.TIMEOUT_RATE,
+            frozenset(
+                {
+                    SignalType.ERROR_RATE,
+                    SignalType.DECLINE_RATE,
+                    SignalType.HEALTH,
+                }
+            ),
+        ),
+        (
+            ScenarioName.HEALTHCHECK_DOWN,
+            SignalType.HEALTH,
+            frozenset(
+                {
+                    SignalType.ERROR_RATE,
+                    SignalType.TIMEOUT_RATE,
+                    SignalType.DECLINE_RATE,
+                }
+            ),
+        ),
+        (
+            ScenarioName.HEALTHCHECK_TIMEOUT,
+            SignalType.HEALTH,
+            frozenset(
+                {
+                    SignalType.ERROR_RATE,
+                    SignalType.TIMEOUT_RATE,
+                    SignalType.DECLINE_RATE,
+                }
+            ),
+        ),
+    ],
+)
+async def test_each_scenario_produces_its_intended_incident_signal(
+    scenario: ScenarioName,
+    expected_signal: SignalType | None,
+    forbidden_signals: frozenset[SignalType],
+) -> None:
+    behavior = await ProviderRuntime().apply_scenario(
+        scenario, ProviderId.ATLAS_PAY
+    )
+    returning_share = 1 - behavior.timeout_rate
+    snapshot = MetricSnapshot(
+        provider=ProviderId.ATLAS_PAY,
+        window_seconds=300,
+        total_requests=1_000,
+        request_rate_per_second=20,
+        success_rate=returning_share * behavior.success_rate,
+        error_rate=returning_share * behavior.provider_error_rate,
+        timeout_rate=behavior.timeout_rate,
+        p95_latency_ms=behavior.base_latency_ms + behavior.jitter_ms,
+        health_up=behavior.health_mode is HealthMode.HEALTHY,
+    )
+
+    detected = {
+        signal.signal_type for signal in AnomalyDetector().detect(snapshot)
+    }
+
+    if expected_signal is None:
+        assert detected == set()
+    else:
+        assert expected_signal in detected
+    assert detected.isdisjoint(forbidden_signals)

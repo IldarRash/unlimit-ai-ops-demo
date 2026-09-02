@@ -667,7 +667,7 @@ function renderProviderEvents(events = [], insights = []) {
     <div class="provider-events">
       <div class="provider-events-heading">
         <h4>Response-code evidence</h4>
-        <span>${events.length} recent provider event${events.length === 1 ? "" : "s"} · not full traffic</span>
+        <span>${events.length} matched response event${events.length === 1 ? "" : "s"} · incident window only</span>
       </div>
       <div class="response-error-list">
         ${Array.from(grouped.entries())

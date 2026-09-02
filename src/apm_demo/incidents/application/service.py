@@ -5,12 +5,13 @@ from datetime import datetime
 from uuid import uuid4
 
 from apm_demo.common.contracts import ProviderId
+from apm_demo.incidents.application.classification import IncidentClassifier
 from apm_demo.incidents.application.detection import (
     AnomalyDetector,
     incident_fingerprint,
     incident_severity,
 )
-from apm_demo.incidents.application.classification import IncidentClassifier
+from apm_demo.incidents.application.evidence import select_incident_provider_events
 from apm_demo.incidents.domain import (
     AuditEventType,
     EvidenceBundle,
@@ -65,10 +66,18 @@ class AnalyzeProviderIncident:
         if not signals:
             return None
 
-        provider_events = (
-            await self._provider_events.list_recent_events(provider, limit=self._event_limit)
+        collected_at = self._now()
+        recent_provider_events = (
+            await self._provider_events.list_recent_events(provider, limit=100)
             if self._provider_events is not None
             else ()
+        )
+        provider_events = select_incident_provider_events(
+            recent_provider_events,
+            snapshot=snapshot,
+            signals=signals,
+            collected_at=collected_at,
+            limit=self._event_limit,
         )
         external_signals = (
             await self._external_signals.list_recent_external_signals(
@@ -83,7 +92,7 @@ class AnalyzeProviderIncident:
             provider_events=provider_events,
             external_signals=external_signals,
             source=type(self._metrics).__name__,
-            collected_at=self._now(),
+            collected_at=collected_at,
         )
         fingerprint = incident_fingerprint(snapshot, signals)
         severity = incident_severity(signals)

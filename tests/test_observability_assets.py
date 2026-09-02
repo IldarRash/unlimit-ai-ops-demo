@@ -1,7 +1,10 @@
 import json
+import re
 from pathlib import Path
 
 import yaml
+
+from apm_demo.common.contracts import ScenarioName
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -199,4 +202,15 @@ def test_incident_console_exposes_verified_counts_and_response_provenance() -> N
     assert 'class="response-error"' in app
     assert "OpenAI assessment" not in app
     assert "Automated analysis" not in app
-    assert "not full traffic" in app
+    assert "matched response event" in app
+
+
+def test_incident_console_exposes_every_operator_scenario() -> None:
+    page = (ROOT / "src/apm_demo/incidents/web/index.html").read_text(
+        encoding="utf-8"
+    )
+    button_scenarios = set(re.findall(r'data-scenario="([^"]+)"', page))
+
+    assert button_scenarios == {
+        scenario.value for scenario in ScenarioName if scenario is not ScenarioName.NORMAL
+    }

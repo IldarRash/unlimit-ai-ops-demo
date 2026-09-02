@@ -108,7 +108,7 @@ The operator console uses these operational labels and does not expose model or 
 2. Prometheus collects request counts, outcome counts, latency histograms, health, and payment-method breakdowns. Only throughput is expressed as RPS; incident impact uses integer request counts.
 3. Non-success provider responses are normalized into allowlisted `ProviderEvent` records. Raw transactions, credentials, and customer data are not stored in the incident evidence.
 4. An Alertmanager webhook or the operator's **Analyze now** action starts the same pipeline.
-5. The backend collects a bounded evidence bundle: one Prometheus window, detected signals, up to 20 recent provider events, alert metadata, and sanitized external operational signals.
+5. The backend collects a bounded evidence bundle: one Prometheus window, detected signals, up to 20 response events matching those signals and that exact window, alert metadata, and sanitized external operational signals. Unrelated declines or errors are not presented as causes of another incident.
 6. Active `response_code_definitions` are resolved from the database. Provider-specific definitions take precedence over global definitions.
 7. Active `known_error_rules` are matched from most specific to least specific.
 8. If a rule matches, the application builds the narrative from reviewed database data and skips OpenAI. If no rule matches, one `incident-v7` OpenAI Responses request produces a concise conclusion, operator disposition, causes, evidence references, recommended checks, and explanations for uncatalogued codes.
@@ -132,7 +132,7 @@ OpenAI cannot change routing, retry payments, execute remediation, acknowledge, 
 | Grafana | [grafana-demo-0349.up.railway.app](https://grafana-demo-0349.up.railway.app) | `demo-viewer`; password is the Railway `grafana` variable `GRAFANA_TESTER_PASSWORD` |
 | Prometheus | [prometheus-demo-8480.up.railway.app](https://prometheus-demo-8480.up.railway.app) | `metrics-reader`; password is the Railway `grafana` variable `PROMETHEUS_WEB_PASSWORD` |
 
-Healthy weighted traffic starts automatically at 20 requests per second. The Railway environment has the paid-analysis gate enabled: **Unknown OrbitWallet error** makes a real OpenAI request when a new uncatalogued incident crosses a threshold. Use **Recover** after the demonstration. Known AtlasPay errors and background traffic do not call OpenAI.
+Healthy weighted traffic can be started at 20 requests per second. The Railway environment has the paid-analysis gate enabled: **Unknown OrbitWallet error** makes a real OpenAI request when a new uncatalogued incident crosses a threshold. Use **Recover provider** after the demonstration. Known AtlasPay errors and background traffic do not call OpenAI.
 
 ## Run locally
 
@@ -185,6 +185,21 @@ Local surfaces:
 5. Recover AtlasPay.
 6. Set `APM_INCIDENT_OPENAI_REQUESTS_ENABLED=true` only when a paid call is intended, rebuild the incident API, and run **Unknown OrbitWallet error** to demonstrate the single unknown-incident report request.
 7. Inspect the conclusion, verified traffic impact, causes, operator checks, response-code provenance, evidence details, and audit trail.
+
+### Controls and scenarios
+
+| Control | What it does | Expected incident path |
+| --- | --- | --- |
+| **Start/Stop traffic** | Starts or pauses weighted traffic; the RPS field changes its target rate | Healthy baseline creates metrics but no incident |
+| **Analyze now** | Evaluates the selected provider immediately using the same pipeline as an alert | Creates or updates an incident only when a threshold is crossed |
+| **Recover provider** | Restores the selected provider baseline | Prometheus resolves the active alert after recovery is observed |
+| **Known AtlasPay error** | Raises AtlasPay `UPSTREAM_ERROR` responses | Database rule, no OpenAI request |
+| **Unknown OrbitWallet error** | Raises OrbitWallet `UNMAPPED_PROVIDER_FAILURE` responses | One OpenAI report for a new active incident when paid requests are enabled |
+| **Business declines** | Raises issuer-style soft and hard declines for OrbitWallet | Business decline incident, separate from technical failures |
+| **Latency** | Raises payment processing latency for the selected provider | p95 latency incident |
+| **Timeout** | Makes most selected-provider payment requests exceed the client timeout | Timeout incident; latency/error alerts may corroborate it |
+| **Health down** | Returns an unhealthy provider health check | Health incident without unrelated payment response codes |
+| **Health timeout** | Makes the provider health endpoint stop responding in time | Health incident representing a non-responsive check |
 
 Stop the stack with:
 

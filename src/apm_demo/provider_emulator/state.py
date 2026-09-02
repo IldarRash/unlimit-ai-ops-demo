@@ -99,9 +99,9 @@ class ProviderRuntime:
             elif scenario is ScenarioName.PROVIDER_ERRORS:
                 updated = baseline.model_copy(
                     update={
-                        "success_rate": 0.42,
-                        "soft_decline_rate": 0.08,
-                        "hard_decline_rate": 0.05,
+                        "success_rate": 0.48,
+                        "soft_decline_rate": 0.04,
+                        "hard_decline_rate": 0.03,
                         "provider_error_rate": 0.45,
                     }
                 )
@@ -117,9 +117,9 @@ class ProviderRuntime:
             elif scenario is ScenarioName.UNKNOWN_PROVIDER_ERROR:
                 updated = baseline.model_copy(
                     update={
-                        "success_rate": 0.42,
-                        "soft_decline_rate": 0.08,
-                        "hard_decline_rate": 0.05,
+                        "success_rate": 0.48,
+                        "soft_decline_rate": 0.04,
+                        "hard_decline_rate": 0.03,
                         "provider_error_rate": 0.45,
                         "provider_error_code": "UNMAPPED_PROVIDER_FAILURE",
                     }
