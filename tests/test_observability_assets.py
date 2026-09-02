@@ -53,10 +53,14 @@ def test_grafana_dashboard_covers_required_observability_signals() -> None:
         "Actual vs target traffic",
         "Business decline count by interval",
         "Technical failure count by interval",
-        "Active provider scenario",
-        "Applied provider scenarios",
-        "Provider health mode history",
     }.issubset(titles)
+    assert titles.isdisjoint(
+        {
+            "Active provider scenario",
+            "Applied provider scenarios",
+            "Provider health mode history",
+        }
+    )
     assert "histogram_quantile(0.95" in expressions
     assert "apm_client_provider_health" in expressions
     assert "apm_provider_request_duration_seconds_bucket" in expressions
@@ -65,30 +69,8 @@ def test_grafana_dashboard_covers_required_observability_signals() -> None:
     assert "soft-decline|hard-decline" in expressions
     assert "provider-error|timeout|transport-error" in expressions
     assert "apm_provider_configured_error_ratio" in expressions
-    assert "apm_demo_active_scenario" in expressions
-    assert "apm_demo_scenario_applied_total" in expressions
-    assert "apm_provider_configured_health_mode" in expressions
     assert "apm_client_timeouts" not in expressions  # counted via bounded outcome label
     assert dashboard["refresh"] == "5s"
-
-
-def test_grafana_state_timelines_hide_inactive_scenario_series() -> None:
-    dashboard = json.loads(
-        (
-            ROOT
-            / "infra/grafana/dashboards/apm-provider-observability.json"
-        ).read_text(encoding="utf-8")
-    )
-    panels = {panel["id"]: panel for panel in dashboard["panels"]}
-
-    scenario = panels[15]
-    health_mode = panels[17]
-    assert scenario["targets"][0]["expr"].endswith(" == 1")
-    assert health_mode["targets"][0]["expr"].endswith(" == 1")
-    assert "0" not in scenario["fieldConfig"]["defaults"]["mappings"][0]["options"]
-    assert "0" not in health_mode["fieldConfig"]["defaults"]["mappings"][0]["options"]
-    assert len(scenario["fieldConfig"]["overrides"]) == 2
-    assert len(health_mode["fieldConfig"]["overrides"]) == 1
 
 
 def test_grafana_datasource_and_dashboard_are_file_provisioned() -> None:

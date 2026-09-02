@@ -352,80 +352,6 @@
       ],
       "title": "Technical failure count by interval",
       "type": "timeseries"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            {"options": {"1": {"color": "red", "index": 0, "text": "INCIDENT"}}, "type": "value"}
-          ],
-          "max": 1,
-          "min": 0
-        },
-        "overrides": [
-          {
-            "matcher": {"id": "byRegexp", "options": ".* · normal$"},
-            "properties": [
-              {"id": "mappings", "value": [{"options": {"1": {"color": "green", "index": 0, "text": "BASELINE"}}, "type": "value"}]}
-            ]
-          },
-          {
-            "matcher": {"id": "byRegexp", "options": ".* · recover$"},
-            "properties": [
-              {"id": "mappings", "value": [{"options": {"1": {"color": "blue", "index": 0, "text": "RECOVERY"}}, "type": "value"}]}
-            ]
-          }
-        ]
-      },
-      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 39},
-      "id": 15,
-      "options": {"alignValue": "left", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": false}, "mergeValues": true, "rowHeight": 0.9, "showValue": "auto", "tooltip": {"mode": "single", "sort": "none"}},
-      "targets": [
-        {"expr": "apm_demo_active_scenario{provider=~\"$provider\"} == 1", "legendFormat": "{{provider}} · {{scenario}}", "refId": "A"}
-      ],
-      "title": "Active provider scenario",
-      "type": "state-timeline"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
-      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 39},
-      "id": 16,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [
-        {"expr": "sum by (provider, scenario) (increase(apm_demo_scenario_applied_total{provider=~\"$provider\"}[$__rate_interval]))", "legendFormat": "{{provider}} · {{scenario}}", "refId": "A"}
-      ],
-      "title": "Applied provider scenarios",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            {"options": {"1": {"color": "red", "index": 0, "text": "TIMEOUT"}}, "type": "value"}
-          ],
-          "max": 1,
-          "min": 0
-        },
-        "overrides": [
-          {
-            "matcher": {"id": "byRegexp", "options": ".* · healthy$"},
-            "properties": [
-              {"id": "mappings", "value": [{"options": {"1": {"color": "green", "index": 0, "text": "HEALTHY"}}, "type": "value"}]}
-            ]
-          }
-        ]
-      },
-      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 46},
-      "id": 17,
-      "options": {"alignValue": "left", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": false}, "mergeValues": true, "rowHeight": 0.9, "showValue": "auto", "tooltip": {"mode": "single", "sort": "none"}},
-      "targets": [
-        {"expr": "apm_provider_configured_health_mode{provider=~\"$provider\"} == 1", "legendFormat": "{{provider}} · {{mode}}", "refId": "A"}
-      ],
-      "title": "Provider health mode history",
-      "type": "state-timeline"
     }
   ],
   "refresh": "5s",
@@ -458,6 +384,6 @@
   "timezone": "browser",
   "title": "APM Provider Observability",
   "uid": "apm-provider-observability",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
