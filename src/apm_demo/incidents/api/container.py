@@ -109,7 +109,7 @@ def build_container(
             settings.openai_api_key_value(),
             model=settings.openai_model,
             requests_enabled=settings.openai_requests_enabled,
-            timeout_seconds=settings.request_timeout_seconds,
+            timeout_seconds=settings.llm_timeout_seconds,
             failure_threshold=settings.llm_failure_threshold,
             circuit_reset_seconds=settings.llm_circuit_reset_seconds,
         )

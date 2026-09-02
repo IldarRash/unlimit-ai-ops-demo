@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "scope": "local synthetic end-to-end verification; no customer data",
+  "executed_at": "2026-09-02",
+  "runtime": {
+    "model": "gpt-5.4-mini",
+    "prompt_version": "incident-v4",
+    "responses_store": false,
+    "requests_gate_enabled": true,
+    "llm_timeout_seconds": 30
+  },
+  "scenario": {
+    "provider": "orbit-wallet",
+    "name": "unknown-provider-error",
+    "started_at": "2026-09-02T08:06:36.5601104Z",
+    "analysis_completed_at": "2026-09-02T08:07:34Z",
+    "recovery_requested_at": "2026-09-02T08:08:13Z",
+    "incident_resolved_at": "2026-09-02T08:10:57.647393Z"
+  },
+  "result": {
+    "alert_source": "Alertmanager",
+    "metrics_source": "PrometheusMetricsSource",
+    "classification": "unknown",
+    "generated_by": "openai",
+    "request_id_present": true,
+    "provider_event_count": 20,
+    "external_signal_count": 1,
+    "cause_count": 2,
+    "recommended_action_count": 4,
+    "all_evidence_refs_valid": true,
+    "all_actions_advisory": true,
+    "alert_to_analysis_seconds_approx": 57.4,
+    "evidence_collection_to_response_seconds_approx": 7.0,
+    "automatic_recovery_verified": true
+  },
+  "usage": {
+    "input_tokens": 3464,
+    "output_tokens": 807,
+    "input_usd_per_million_tokens": 0.75,
+    "output_usd_per_million_tokens": 4.5,
+    "estimated_request_cost_usd": 0.0062295
+  },
+  "privacy": {
+    "api_key_recorded": false,
+    "request_id_recorded": false,
+    "raw_provider_events_recorded": false,
+    "raw_external_signal_recorded": false
+  },
+  "regression_suite": {
+    "passed": 71,
+    "failed": 0,
+    "external_openai_requests": 0
+  }
+}

@@ -19,8 +19,29 @@ The known error used the catalog and did not increment the offline analyzer call
 
 This result validates deterministic routing and schema contracts. It is **not** a claim
 about model accuracy: OpenAI is replaced by a local fixture analyzer and no network
-request is made. Model-quality evidence begins only after the approved live smoke and
-a human-reviewed labelled incident set.
+request is made. The approved live smoke below validates the integration and grounding
+boundary; accuracy still requires a human-reviewed labelled incident set.
+
+## Approved live OpenAI smoke
+
+On 2 September 2026, a local synthetic OrbitWallet degradation completed the full
+Prometheus → Alertmanager → evidence collection → OpenAI → incident → recovery path.
+The `gpt-5.4-mini` response used prompt `incident-v4`, passed the strict evidence-reference
+validator, and produced two grounded technical causes plus four advisory actions. Request
+ID presence was verified but the value was not persisted in the evidence artifact.
+
+| Measurement | Observed |
+| --- | ---: |
+| Scenario start to stored analysis | ~57.4 s |
+| Evidence collection to OpenAI response | ~7.0 s |
+| Input tokens | 3,464 |
+| Output tokens | 807 |
+| Estimated request cost | $0.0062295 |
+| Automatic incident recovery | Verified |
+
+This single latency observation is inside the 8-second per-request target, but it is not
+enough to claim a p95. The sanitized machine-readable record is
+`docs/evaluation/live-openai-smoke.json`.
 
 ## Production KPI scorecard
 
@@ -54,9 +75,9 @@ cost = input_tokens / 1,000,000 * 0.75
 
 At 2,000 input and 600 output tokens, the estimated request cost is **$0.0042**.
 The current `max_output_tokens=1200` safety cap keeps a 3,000-input-token request at
-approximately **$0.00765**, below the $0.01 operating ceiling. Actual reasoning and
-output usage must be recorded from the approved smoke before calling this budget
-validated.
+approximately **$0.00765**, below the $0.01 operating ceiling. The approved live request
+used 3,464 input and 807 output tokens, costing approximately **$0.0062295**, so the
+per-unknown-incident budget is validated for this observed case.
 
 The model is used only for unknown incidents. Healthy windows produce no incident and
 known provider responses use the catalog, so most traffic creates no model cost.

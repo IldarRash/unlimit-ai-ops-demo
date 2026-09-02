@@ -20,7 +20,7 @@ Sentinel is a working Technical Operations demo for investigating degradation ac
 - PostgreSQL persistence for the complete Compose/Railway runtime and SQLite as an explicit local/test fallback.
 - Same-origin operator API: the browser never needs direct access to private provider or traffic-generator services.
 - Authenticated external operational signals for provider status, support tickets, Slack/email escalations, merchant complaints, and operations reports. Only normalized, explicitly non-customer data enters the evidence bundle.
-- 70 automated tests covering domain contracts, OpenAI request/response validation with local fakes, the network-request gate, catalog bypass, external-signal ingestion, orchestration, API access control, demo controls, observability assets, and persistence selection.
+- 71 automated tests covering domain contracts, OpenAI request/response validation with local fakes, the network-request gate, catalog bypass, external-signal ingestion, orchestration, API access control, demo controls, observability assets, and persistence selection.
 
 No production mock analyzer remains. Runtime configuration requires an `OPENAI_API_KEY`. A separate `APM_INCIDENT_OPENAI_REQUESTS_ENABLED` gate defaults to `false`, so a key can be configured without accidental external requests during local verification. Automated tests inject local fake analyzers and never call the external API.
 
@@ -111,6 +111,7 @@ Use the ignored `.env` file for local values:
 OPENAI_API_KEY=replace_with_your_real_key
 APM_INCIDENT_OPENAI_MODEL=gpt-5.4-mini
 APM_INCIDENT_OPENAI_REQUESTS_ENABLED=false
+APM_INCIDENT_LLM_TIMEOUT_SECONDS=30
 APM_REQUESTS_PER_SECOND=4
 APM_INCIDENT_METRICS_MODE=prometheus
 APM_INCIDENT_GRAFANA_PUBLIC_URL=http://localhost:3000
@@ -153,7 +154,7 @@ OpenAPI documentation is at `http://localhost:8002/docs`.
 
 ## Assessment alignment
 
-The source assignment asks for practical, controlled improvement of APM operational workflows, with emphasis on incident triage, signal validation, summarization, routing, runbook support, and process automation. This repository now contains both the working-code demonstration and the written/evaluation artifacts. Protected live-model and public-deployment verification remain explicitly gated below.
+The source assignment asks for practical, controlled improvement of APM operational workflows, with emphasis on incident triage, signal validation, summarization, routing, runbook support, and process automation. This repository now contains both the working-code demonstration and the written/evaluation artifacts. The approved local live-model verification is complete; public deployment remains explicitly gated below.
 
 ### Assignment objective and scenario coverage
 
@@ -174,7 +175,7 @@ The source assignment asks for practical, controlled improvement of APM operatio
 | Criterion | Current coverage | Remaining gap |
 | --- | --- | --- |
 | Operational thinking | Realistic provider-specific triage, business/technical separation, prioritization, recovery, handoffs, and assumptions | Covered in code, walkthrough, and proposal |
-| AI judgment | Rules handle known errors; OpenAI handles unknowns; failures close to manual review; use-case limits are explicit | Covered in classifier, proposal, and evaluation plan |
+| AI judgment | Rules handle known errors; OpenAI handles unknowns; failures close to manual review; use-case limits are explicit | Covered in classifier, proposal, evaluation plan, and live smoke evidence |
 | Agent design | Trigger, normalized inputs, decision branch, advisory actions, human status control, guardrails, audit trail | Covered in implementation and proposal diagram/narrative |
 | Automation mindset | Metrics → alert → evidence → classification → incident → operator feedback is automated; external signals join the evidence | Covered in runtime and authenticated integration API |
 | Communication | README, API docs, dashboards, compact operator UI, proposal, and reproducible evaluation are present | DOCX visual render certification remains before submission |
@@ -186,7 +187,7 @@ The source assignment asks for practical, controlled improvement of APM operatio
 | Prompt structure | Implemented as versioned system instructions plus strict JSON Schema |
 | Confidence and severity | Implemented |
 | Feedback loop | Feedback capture plus a documented repeatable evaluation/improvement loop |
-| Cost/latency trade-offs | Model budget and offline timing documented in `docs/evaluation/evaluation-plan.md` |
+| Cost/latency trade-offs | Budget plus live token, cost, and latency evidence documented in `docs/evaluation/evaluation-plan.md` |
 | KPI framework | Accuracy, false-positive, bypass, evidence, helpfulness, latency, cost, MTTA, and MTTR targets documented |
 
 ## Delivery graph status
@@ -196,9 +197,9 @@ N0 Working prototype [done]
  ├──> N1 Written assessment package [authored; DOCX visual QA pending]
  ├──> N2 Evaluation and KPI package [done: 6/6 offline cases]
  ├──> N3 External signal integrations [done and locally verified]
- └──> N4 Enable gate and run live OpenAI smoke [awaiting explicit paid-request approval]
+ └──> N4 Enable gate and run live OpenAI smoke [done]
           │
-          └──> N5 Complete unknown-incident end-to-end verification [blocked by N4]
+          └──> N5 Complete unknown-incident end-to-end verification [done]
                     │
           N1 + N2 + N5 ──> N6 Railway deployment and public-access verification
                               [configuration preparation local; public/secret changes require approval]
@@ -209,8 +210,8 @@ Completion evidence for each node:
 - `N1`: authored in Markdown and DOCX; rendering must be visually inspected before the DOCX is treated as submission-ready.
 - `N2`: complete with a six-case golden set, repeatable offline command, 6/6 measured result, KPI definitions, and model cost/latency budget.
 - `N3`: complete with an authenticated external-signal API/CLI, six normalized signal types, persistence, context collection, dashboard metric, failure tests, and a locally verified catalog-bypass incident.
-- `N4`: enable the runtime gate for one approved real request proving structured output, request ID, token usage, and redaction boundaries.
-- `N5`: baseline → known catalog incident → recovery and baseline → unknown OpenAI incident → recovery, with screenshots/log evidence.
+- `N4`: complete. An approved `gpt-5.4-mini` Responses request returned strict `incident-v4` output, request metadata, 3,464 input tokens, and 807 output tokens; the evidence artifact stores presence flags rather than credentials or request IDs.
+- `N5`: complete. Alertmanager opened the unknown OrbitWallet incident from Prometheus metrics, 20 normalized provider events, and one external signal; OpenAI produced two grounded causes and four advisory actions, the UI was visually verified, and the incident automatically resolved after recovery.
 - `N6`: healthy Railway services, protected public URLs, PostgreSQL persistence, and rollback evidence.
 
 ### Evaluation and submission artifacts
@@ -219,14 +220,15 @@ Completion evidence for each node:
 - `docs/submission/unlimit-ai-assessment-proposal.docx` — generated proposal; visual render QA is still required.
 - `docs/evaluation/evaluation-plan.md` — KPIs, quality gates, latency/cost budgets, and improvement loop.
 - `docs/evaluation/offline-eval-results.json` — current deterministic result: 6/6 cases passed without network or paid model use.
+- `docs/evaluation/live-openai-smoke.json` — sanitized local end-to-end OpenAI timing, usage, grounding, and recovery evidence.
 - `tests/fixtures/golden_incidents.json` — versioned golden incident set.
 
 ## Railway deployment
 
 Railway is designed as separate services plus managed PostgreSQL. The machine-readable inventory is `railway/services.json`; network boundaries, variables, rollout order, verification, and rollback are documented in `docs/architecture/railway-deployment.md`.
 
-Only Grafana, Prometheus, and the Incident API/UI should receive public domains. Provider emulator, traffic generator, Alertmanager, and PostgreSQL remain on private networking. Public-domain creation, credential uploads, and the first paid OpenAI analysis are explicit rollout gates.
+Only Grafana, Prometheus, and the Incident API/UI should receive public domains. Provider emulator, traffic generator, Alertmanager, and PostgreSQL remain on private networking. Public-domain creation and credential uploads remain explicit rollout gates; paid OpenAI traffic remains disabled by default per environment.
 
 ## Verification boundary
 
-The repository has 70 passing automated tests. The post-change Compose build, healthy baseline, UI controls, nine-panel incident dashboard, Prometheus targets, external-signal ingestion, PostgreSQL migration, and a known catalog incident/recovery flow with external evidence have been verified locally. These checks keep the OpenAI network gate disabled; the approved live OpenAI branch and its complete recovery capture remain `N4`–`N5`. Railway configuration can be validated locally, but secret upload, public domains, and deployment verification remain protected `N6` actions.
+The repository has 71 passing automated tests. The post-change Compose build, healthy baseline, UI controls, nine-panel incident dashboard, Prometheus targets, external-signal ingestion, PostgreSQL migration, known catalog bypass, and unknown OpenAI incident/recovery flow have been verified locally. The live run completed in about 57.4 seconds from scenario start to stored analysis, used 3,464 input and 807 output tokens, displayed grounded causes in the operator UI, and resolved automatically after recovery. Railway secret upload, public domains, and deployment verification remain protected `N6` actions.

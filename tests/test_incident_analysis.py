@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from apm_demo.common.contracts import ProviderId
+from apm_demo.incidents.api.config import IncidentSettings
 from apm_demo.incidents.application.detection import AnomalyDetector
 from apm_demo.incidents.domain import (
     AnalysisProvider,
@@ -21,6 +22,14 @@ from apm_demo.incidents.infrastructure.analysis import (
     AnalysisUnavailable,
     OpenAIIncidentAnalyzer,
 )
+
+
+def test_incident_settings_use_a_dedicated_llm_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-that-is-long-enough")
+    settings = IncidentSettings(_env_file=None)
+
+    assert settings.request_timeout_seconds == 5
+    assert settings.llm_timeout_seconds == 30
 
 
 def evidence() -> EvidenceBundle:
@@ -79,8 +88,20 @@ async def test_openai_adapter_requests_strict_non_stored_structured_output() -> 
     result = await analyzer.analyze(evidence())
 
     assert captured["store"] is False
+    model_input = json.loads(captured["input"])  # type: ignore[arg-type]
+    expected_refs = [
+        "signal:error-rate",
+        "signal:latency",
+        "signal:timeout-rate",
+        "snapshot",
+    ]
+    assert model_input["allowed_evidence_refs"] == expected_refs
     assert captured["text"]["format"]["type"] == "json_schema"  # type: ignore[index]
     assert captured["text"]["format"]["strict"] is True  # type: ignore[index]
+    schema = captured["text"]["format"]["schema"]  # type: ignore[index]
+    assert schema["$defs"]["_ProposedCause"]["properties"]["evidence_refs"][  # type: ignore[index]
+        "items"
+    ]["enum"] == expected_refs
     assert result.generated_by is AnalysisProvider.OPENAI
     assert result.causes[0].category == "technical"
     assert result.recommended_actions[0].safe_to_automate is False

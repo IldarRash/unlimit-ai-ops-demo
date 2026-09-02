@@ -54,6 +54,7 @@ class IncidentSettings(BaseSettings):
     critical_timeout_rate: float = Field(default=0.10, gt=0, le=1)
     warning_decline_rate: float = Field(default=0.10, gt=0, le=1)
     critical_decline_rate: float = Field(default=0.25, gt=0, le=1)
+    llm_timeout_seconds: float = Field(default=30, gt=0, le=120)
     llm_failure_threshold: int = Field(default=3, ge=1, le=10)
     llm_circuit_reset_seconds: float = Field(default=30, ge=1, le=600)
     openai_model: str = "gpt-5.4-mini"
