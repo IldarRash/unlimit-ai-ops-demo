@@ -20,7 +20,7 @@ Sentinel is a working Technical Operations demo for investigating degradation ac
 - PostgreSQL persistence for the complete Compose/Railway runtime and SQLite as an explicit local/test fallback.
 - Same-origin operator API: the browser never needs direct access to private provider or traffic-generator services.
 - Authenticated external operational signals for provider status, support tickets, Slack/email escalations, merchant complaints, and operations reports. Only normalized, explicitly non-customer data enters the evidence bundle.
-- 69 automated tests covering domain contracts, OpenAI request/response validation with local fakes, the network-request gate, catalog bypass, external-signal ingestion, orchestration, API access control, demo controls, observability assets, and persistence selection.
+- 70 automated tests covering domain contracts, OpenAI request/response validation with local fakes, the network-request gate, catalog bypass, external-signal ingestion, orchestration, API access control, demo controls, observability assets, and persistence selection.
 
 No production mock analyzer remains. Runtime configuration requires an `OPENAI_API_KEY`. A separate `APM_INCIDENT_OPENAI_REQUESTS_ENABLED` gate defaults to `false`, so a key can be configured without accidental external requests during local verification. Automated tests inject local fake analyzers and never call the external API.
 
@@ -229,4 +229,4 @@ Only Grafana, Prometheus, and the Incident API/UI should receive public domains.
 
 ## Verification boundary
 
-The repository has 69 passing automated tests. The post-change Compose build, healthy baseline, UI controls, nine-panel incident dashboard, Prometheus targets, external-signal ingestion, PostgreSQL migration, and a known catalog incident/recovery flow with external evidence have been verified locally. These checks keep the OpenAI network gate disabled; the approved live OpenAI branch and its complete recovery capture remain `N4`–`N5`. Railway configuration can be validated locally, but secret upload, public domains, and deployment verification remain protected `N6` actions.
+The repository has 70 passing automated tests. The post-change Compose build, healthy baseline, UI controls, nine-panel incident dashboard, Prometheus targets, external-signal ingestion, PostgreSQL migration, and a known catalog incident/recovery flow with external evidence have been verified locally. These checks keep the OpenAI network gate disabled; the approved live OpenAI branch and its complete recovery capture remain `N4`–`N5`. Railway configuration can be validated locally, but secret upload, public domains, and deployment verification remain protected `N6` actions.
