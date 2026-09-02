@@ -31,6 +31,22 @@ groups:
         annotations:
           summary: "{{ $labels.provider }} error rate is above 5%"
 
+      - alert: ProviderBusinessDeclineHigh
+        expr: |
+          sum by (provider) (
+            rate(apm_client_requests_total{outcome=~"soft-decline|hard-decline"}[2m])
+          )
+          /
+          clamp_min(sum by (provider) (rate(apm_client_requests_total[2m])), 0.001)
+          > 0.15
+        for: 1m
+        keep_firing_for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.provider }} business decline rate is above 15%"
+          description: "Soft and hard declines are elevated while technical-error alerts remain separate."
+
       - alert: ProviderHealthDown
         expr: apm_client_provider_health == 0
         for: 15s

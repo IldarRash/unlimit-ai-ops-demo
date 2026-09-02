@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from apm_demo.incidents.domain import (
     AnalysisProvider,
+    CauseHypothesis,
     ClassificationKind,
     EvidenceBundle,
     IncidentAnalysis,
@@ -42,7 +43,7 @@ class IncidentClassifier:
                 if rule is not None:
                     return ClassificationResult(
                         kind=ClassificationKind.KNOWN,
-                        analysis=self._catalog_analysis(rule),
+                        analysis=self._catalog_analysis(rule, event),
                         matched_event=event,
                         matched_rule=rule,
                     )
@@ -71,12 +72,22 @@ class IncidentClassifier:
         )
 
     @staticmethod
-    def _catalog_analysis(rule: KnownErrorRule) -> IncidentAnalysis:
+    def _catalog_analysis(
+        rule: KnownErrorRule, event: ProviderEvent
+    ) -> IncidentAnalysis:
         return IncidentAnalysis(
             headline=rule.headline,
             summary=rule.summary,
             impact=rule.impact,
             probable_causes=rule.probable_causes,
+            causes=(
+                CauseHypothesis(
+                    category="technical",
+                    title="Cataloged provider response",
+                    why="The normalized provider event matched the active known-error rule.",
+                    evidence_refs=(f"event:{event.event_id}",),
+                ),
+            ),
             recommended_actions=rule.recommended_actions,
             confidence=rule.confidence,
             generated_by=AnalysisProvider.CATALOG,
@@ -93,6 +104,14 @@ class IncidentClassifier:
             summary=reason,
             impact="Provider impact must be assessed from the attached metrics and events.",
             probable_causes=("Insufficient or temporarily unavailable analysis context",),
+            causes=(
+                CauseHypothesis(
+                    category="technical",
+                    title="Automated analysis unavailable",
+                    why=reason,
+                    evidence_refs=("snapshot",),
+                ),
+            ),
             recommended_actions=(
                 RemediationAction(
                     priority=1,

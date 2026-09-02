@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import CollectorRegistry
 
-from apm_demo.common.contracts import HealthMode
+from apm_demo.common.contracts import HealthMode, ProviderId
 from apm_demo.provider_emulator.app import create_app
 from apm_demo.provider_emulator.metrics import ProviderMetrics
 from apm_demo.provider_emulator.state import BASELINE_BEHAVIORS, ProviderRuntime
@@ -91,6 +91,7 @@ def test_invalid_partial_distribution_is_rejected() -> None:
 
 def test_baseline_operational_failure_rates_stay_below_alert_threshold() -> None:
     for behavior in BASELINE_BEHAVIORS.values():
+        assert behavior.success_rate >= 0.90
         assert behavior.provider_error_rate + behavior.timeout_rate < 0.05
 
 
@@ -99,6 +100,8 @@ def test_baseline_operational_failure_rates_stay_below_alert_threshold() -> None
     [
         ("slow-provider", "base_latency_ms", 1_600),
         ("provider-errors", "provider_error_rate", 0.45),
+        ("business-declines", "soft_decline_rate", 0.38),
+        ("unknown-provider-error", "provider_error_code", "UNMAPPED_PROVIDER_FAILURE"),
         ("provider-timeout", "timeout_rate", 0.65),
         ("healthcheck-down", "health_mode", "unhealthy"),
         ("healthcheck-timeout", "health_mode", "timeout"),
@@ -115,3 +118,37 @@ def test_scenarios_change_selected_provider(
 
     assert response.status_code == 200
     assert response.json()["behavior"][field] == expected
+
+
+def test_scenario_and_baseline_state_are_visible_in_metrics() -> None:
+    client, _ = build_client([0.9])
+
+    client.post(
+        "/admin/scenarios/business-declines", json={"provider": "orbit-wallet"}
+    )
+    metrics = client.get("/metrics").text
+
+    assert 'apm_demo_active_scenario{provider="atlas-pay",scenario="normal"} 1.0' in metrics
+    assert (
+        'apm_demo_active_scenario{provider="orbit-wallet",scenario="business-declines"} 1.0'
+        in metrics
+    )
+    assert (
+        'apm_demo_scenario_applied_total{provider="orbit-wallet",scenario="business-declines"} 1.0'
+        in metrics
+    )
+    assert 'apm_provider_configured_error_ratio{provider="orbit-wallet"} 0.02' in metrics
+
+
+def test_scenarios_are_reproducible_instead_of_stacking_previous_degradation() -> None:
+    client, _ = build_client([0.9])
+    client.post("/admin/scenarios/slow-provider", json={"provider": "atlas-pay"})
+
+    response = client.post(
+        "/admin/scenarios/provider-errors", json={"provider": "atlas-pay"}
+    )
+
+    assert response.json()["behavior"]["base_latency_ms"] == (
+        BASELINE_BEHAVIORS[ProviderId.ATLAS_PAY].base_latency_ms
+    )
+    assert response.json()["behavior"]["provider_error_rate"] == 0.45

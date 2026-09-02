@@ -3,6 +3,7 @@ const state = {
   selectedId: null,
   audit: [],
   runtime: null,
+  control: null,
   loading: false,
   stream: null,
 };
@@ -11,6 +12,12 @@ const elements = {
   form: document.querySelector("#analyze-form"),
   provider: document.querySelector("#provider"),
   analyzeButton: document.querySelector("#analyze-button"),
+  trafficButton: document.querySelector("#traffic-button"),
+  trafficRps: document.querySelector("#traffic-rps"),
+  actionStatus: document.querySelector("#action-status"),
+  providerDashboard: document.querySelector("#provider-dashboard-link"),
+  incidentDashboard: document.querySelector("#incident-dashboard-link"),
+  scenarioControls: document.querySelector(".scenario-controls"),
   refreshButton: document.querySelector("#refresh-button"),
   incidentList: document.querySelector("#incident-list"),
   incidentCount: document.querySelector("#incident-count"),
@@ -95,15 +102,49 @@ function setLoading(loading) {
   state.loading = loading;
   elements.analyzeButton.disabled = loading;
   elements.refreshButton.disabled = loading;
+  elements.trafficButton.disabled = loading;
+  elements.scenarioControls.querySelectorAll("button").forEach((button) => {
+    button.disabled = loading;
+  });
   elements.analyzeButton.querySelector(".button-label").textContent = loading
     ? "Analyzing…"
-    : "Run analysis";
+    : "Analyze now";
 }
 
 async function loadRuntime() {
   state.runtime = await request("/api/v1/runtime");
-  const analyzer = state.runtime.analyzer_mode === "openai" ? state.runtime.model : "Mock analysis";
+  const analyzer = state.runtime.openai_requests_enabled
+    ? state.runtime.model
+    : `${state.runtime.model} · requests gated`;
   elements.runtimeLabel.textContent = `${analyzer} · ${state.runtime.metrics_mode} metrics`;
+  setDashboardLink(elements.providerDashboard, state.runtime.grafana_provider_dashboard_url);
+  setDashboardLink(elements.incidentDashboard, state.runtime.grafana_incident_dashboard_url);
+}
+
+function setDashboardLink(element, url) {
+  if (!url) return;
+  element.href = url;
+  element.hidden = false;
+}
+
+function setActionStatus(message, tone = "neutral") {
+  elements.actionStatus.textContent = message;
+  elements.actionStatus.dataset.tone = tone;
+}
+
+async function loadControl() {
+  state.control = await request("/api/v1/demo/control");
+  const generator = state.control.generator || {};
+  elements.trafficRps.value = generator.requests_per_second ?? elements.trafficRps.value;
+  renderControl();
+}
+
+function renderControl() {
+  const generator = state.control?.generator || {};
+  const enabled = Boolean(generator.enabled);
+  elements.trafficButton.querySelector(".traffic-label").textContent = enabled ? "Stop traffic" : "Start traffic";
+  elements.trafficButton.dataset.active = String(enabled);
+  setActionStatus(enabled ? `Traffic running at ${generator.requests_per_second} RPS` : "Traffic stopped", enabled ? "success" : "neutral");
 }
 
 async function loadIncidents(preferredId = state.selectedId) {
@@ -166,12 +207,79 @@ async function analyzeProvider(event) {
       body: JSON.stringify({ provider: elements.provider.value }),
     });
     if (!result.detected) {
+      setActionStatus(`${labels[elements.provider.value]} is healthy — no anomaly in the current evidence window.`, "success");
       showToast(`${labels[elements.provider.value]} is within configured thresholds.`);
       return;
     }
     await loadIncidents(result.incident.incident_id);
+    setActionStatus(`Analysis complete: ${result.incident.analysis.classification === "known" ? "catalog match" : "OpenAI assessment"}.`, "success");
     showToast(`Incident ${result.incident.occurrences > 1 ? "correlated" : "created"}.`);
   } catch (error) {
+    setActionStatus(error.message, "error");
+    showToast(error.message, "error");
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function toggleTraffic() {
+  const requestedRps = Number(elements.trafficRps.value);
+  if (!Number.isInteger(requestedRps) || requestedRps < 1 || requestedRps > 100) {
+    setActionStatus("Choose a whole traffic rate from 1 to 100 RPS.", "error");
+    elements.trafficRps.focus();
+    return;
+  }
+  setLoading(true);
+  try {
+    const enabled = !state.control?.generator?.enabled;
+    await request("/api/v1/demo/traffic", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled, requests_per_second: requestedRps }),
+    });
+    await loadControl();
+  } catch (error) {
+    setActionStatus(error.message, "error");
+    showToast(error.message, "error");
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function updateRunningTrafficRate() {
+  if (!state.control?.generator?.enabled) return;
+  const requestedRps = Number(elements.trafficRps.value);
+  if (!Number.isInteger(requestedRps) || requestedRps < 1 || requestedRps > 100) {
+    setActionStatus("Choose a whole traffic rate from 1 to 100 RPS.", "error");
+    return;
+  }
+  setLoading(true);
+  try {
+    await request("/api/v1/demo/traffic", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled: true, requests_per_second: requestedRps }),
+    });
+    await loadControl();
+  } catch (error) {
+    setActionStatus(error.message, "error");
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function runScenario(button) {
+  const provider = button.dataset.scenarioProvider || elements.provider.value;
+  elements.provider.value = provider;
+  setLoading(true);
+  setActionStatus(`Applying ${button.textContent.trim()}…`);
+  try {
+    await request("/api/v1/demo/scenarios", {
+      method: "POST",
+      body: JSON.stringify({ provider, scenario: button.dataset.scenario }),
+    });
+    await loadControl();
+    setActionStatus(`${button.textContent.trim()} applied to ${labels[provider]}.`, "success");
+  } catch (error) {
+    setActionStatus(error.message, "error");
     showToast(error.message, "error");
   } finally {
     setLoading(false);
@@ -314,6 +422,7 @@ function renderDetail() {
           ${metric("p95 latency", `${Math.round(snapshot.p95_latency_ms)} ms`, snapshot.p95_latency_ms >= 800)}
           ${metric("Error rate", formatRatio(snapshot.error_rate), snapshot.error_rate >= 0.05)}
           ${metric("Timeout rate", formatRatio(snapshot.timeout_rate), snapshot.timeout_rate >= 0.03)}
+          ${metric("Decline rate", formatRatio(Math.max(0, 1 - snapshot.success_rate - snapshot.error_rate - snapshot.timeout_rate)), (1 - snapshot.success_rate - snapshot.error_rate - snapshot.timeout_rate) >= 0.1)}
           ${metric("Success rate", formatRatio(snapshot.success_rate), false)}
           ${metric("Health", snapshot.health_up ? "Up" : "Down", !snapshot.health_up)}
         </dl>
@@ -336,10 +445,8 @@ function renderDetail() {
         <p class="analysis-impact"><strong>Potential impact</strong>${escapeHtml(analysis.impact)}</p>
         <div class="analysis-columns">
           <div>
-            <h4>Probable causes</h4>
-            <ul class="cause-list">
-              ${analysis.probable_causes.map((cause) => `<li>${escapeHtml(cause)}</li>`).join("")}
-            </ul>
+            <h4>Likely causes</h4>
+            ${renderCauses(analysis)}
           </div>
           <div>
             <h4>Recommended operator checks</h4>
@@ -356,36 +463,50 @@ function renderDetail() {
         ${analysis.runbook_url ? `<a class="runbook-link" href="${escapeHtml(analysis.runbook_url)}" target="_blank" rel="noreferrer">Open reviewed runbook <span aria-hidden="true">↗</span></a>` : ""}
       </section>
 
-      <section class="detail-section" aria-labelledby="feedback-title">
-        <div class="section-heading">
-          <h3 id="feedback-title">Analysis feedback</h3>
-          <p>Used for evaluation; never changes production automatically</p>
+      <details class="detail-disclosure">
+        <summary>Feedback and audit <span>${state.audit.length} audit event${state.audit.length === 1 ? "" : "s"}</span></summary>
+        <div class="disclosure-content">
+          <section aria-labelledby="feedback-title">
+            <div class="section-heading"><h3 id="feedback-title">Analysis feedback</h3><p>Evaluation only; never changes production automatically</p></div>
+            <form id="feedback-form" class="feedback-form">
+              <label for="feedback-note">Optional operator note</label>
+              <textarea id="feedback-note" maxlength="1000" rows="2" placeholder="What was useful or incorrect?"></textarea>
+              <div class="feedback-actions" role="group" aria-label="Rate this analysis">
+                <button class="button button-secondary" type="button" data-feedback="helpful">Helpful</button>
+                <button class="button button-secondary" type="button" data-feedback="not-helpful">Not helpful</button>
+                <button class="button button-secondary" type="button" data-feedback="incorrect">Incorrect</button>
+              </div>
+            </form>
+          </section>
+          <section aria-labelledby="audit-title">
+            <div class="section-heading"><h3 id="audit-title">Audit trail</h3></div>
+            <ol class="audit-list">${state.audit.map((event) => `<li><time datetime="${escapeHtml(event.occurred_at)}">${escapeHtml(formatTime(event.occurred_at))}</time><span><span class="audit-event">${escapeHtml(event.event_type.replaceAll("-", " "))}</span><span class="audit-detail">${escapeHtml(Object.entries(event.details).map(([key, value]) => `${key}: ${value}`).join(" · "))}</span></span></li>`).join("")}</ol>
+          </section>
         </div>
-        <form id="feedback-form" class="feedback-form">
-          <label for="feedback-note">Optional operator note</label>
-          <textarea id="feedback-note" maxlength="1000" rows="2" placeholder="What was useful or incorrect?"></textarea>
-          <div class="feedback-actions" role="group" aria-label="Rate this analysis">
-            <button class="button button-secondary" type="button" data-feedback="helpful">Helpful</button>
-            <button class="button button-secondary" type="button" data-feedback="not-helpful">Not helpful</button>
-            <button class="button button-secondary" type="button" data-feedback="incorrect">Incorrect</button>
-          </div>
-        </form>
-      </section>
-
-      <section class="detail-section" aria-labelledby="audit-title">
-        <div class="section-heading">
-          <h3 id="audit-title">Audit trail</h3>
-          <p>${state.audit.length} recorded event${state.audit.length === 1 ? "" : "s"}</p>
-        </div>
-        <ol class="audit-list">
-          ${state.audit
-            .map(
-              (event) => `<li><time datetime="${escapeHtml(event.occurred_at)}">${escapeHtml(formatTime(event.occurred_at))}</time><span><span class="audit-event">${escapeHtml(event.event_type.replaceAll("-", " "))}</span><span class="audit-detail">${escapeHtml(Object.entries(event.details).map(([key, value]) => `${key}: ${value}`).join(" · "))}</span></span></li>`
-            )
-            .join("")}
-        </ol>
-      </section>
+      </details>
     </div>`;
+}
+
+function renderCauses(analysis) {
+  const structuredCauses = analysis.causes || analysis.cause_hypotheses;
+  const causes = Array.isArray(structuredCauses) && structuredCauses.length
+    ? structuredCauses
+    : (analysis.probable_causes || []).map((title) => ({ category: "technical", title, why: "Recorded analysis did not include structured cause evidence.", evidence_refs: [] }));
+  const provenance = analysis.generated_by === "catalog" ? "Catalog" : analysis.generated_by === "openai" ? "OpenAI" : "Manual review";
+  return `<ul class="cause-list">${causes.map((cause) => `
+    <li class="cause-card" data-category="${escapeHtml(cause.category)}">
+      <div class="cause-meta"><span>${escapeHtml(cause.category || "technical")}</span><span>${provenance}</span></div>
+      <strong>${escapeHtml(cause.title)}</strong>
+      <p><b>Why</b> ${escapeHtml(cause.why || "No explanation recorded.")}</p>
+      <div class="evidence-refs">${(cause.evidence_refs || []).length ? cause.evidence_refs.map(evidenceLabel).join("") : "<span>Evidence source unavailable</span>"}</div>
+    </li>`).join("")}</ul>`;
+}
+
+function evidenceLabel(ref) {
+  const [kind, ...parts] = String(ref).split(":");
+  const label = parts.join(":") || kind;
+  const kindLabel = { metric: "Metric", event: "Event", alert: "Alert" }[kind] || "Evidence";
+  return `<span title="${escapeHtml(ref)}">${escapeHtml(kindLabel)}: ${escapeHtml(label.replaceAll("_", " "))}</span>`;
 }
 
 function renderProviderEvents(events = []) {
@@ -416,6 +537,12 @@ function metric(label, value, bad) {
 }
 
 elements.form.addEventListener("submit", analyzeProvider);
+elements.trafficButton.addEventListener("click", toggleTraffic);
+elements.trafficRps.addEventListener("change", updateRunningTrafficRate);
+elements.scenarioControls.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-scenario]");
+  if (button) runScenario(button);
+});
 elements.refreshButton.addEventListener("click", async () => {
   setLoading(true);
   try {
@@ -449,7 +576,7 @@ elements.filterForm.addEventListener("change", async () => {
   }
 });
 
-Promise.all([loadRuntime(), loadIncidents()]).then(connectIncidentStream).catch((error) => {
+Promise.all([loadRuntime(), loadControl(), loadIncidents()]).then(connectIncidentStream).catch((error) => {
   showToast(error.message, "error");
   elements.incidentDetail.innerHTML = `
     <div class="detail-error">

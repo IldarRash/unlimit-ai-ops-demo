@@ -42,6 +42,7 @@ class TrafficGenerator:
         metrics: ClientMetrics,
         *,
         client: httpx.AsyncClient | None = None,
+        incident_client: httpx.AsyncClient | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self.settings = settings
@@ -52,6 +53,11 @@ class TrafficGenerator:
             timeout=settings.request_timeout_seconds,
         )
         self._owns_client = client is None
+        self._incident_client = incident_client or (
+            httpx.AsyncClient(base_url=settings.incident_api_url.rstrip("/"), timeout=settings.request_timeout_seconds)
+            if settings.incident_api_url else None
+        )
+        self._owns_incident_client = incident_client is None and self._incident_client is not None
         self._enabled = settings.generator_enabled
         self._requests_per_second = settings.requests_per_second
         self._stop = asyncio.Event()
@@ -151,7 +157,7 @@ class TrafficGenerator:
             payment_method=payment_method.value,
         ).observe(duration_seconds)
 
-        return TrafficResult(
+        result = TrafficResult(
             provider=definition.provider,
             payment_method=payment_method,
             outcome=outcome,
@@ -160,6 +166,34 @@ class TrafficGenerator:
             response_code=response_code,
             region=request.region,
         )
+        if outcome != PaymentOutcome.SUCCESS.value:
+            await self._report_provider_event(result)
+        return result
+
+    async def _report_provider_event(self, result: TrafficResult) -> None:
+        token = self.settings.provider_event_token_value()
+        if self._incident_client is None or not token or result.outcome == "transport-error":
+            self.metrics.provider_events.labels(provider=result.provider.value, outcome=result.outcome, status="skipped").inc()
+            return
+        try:
+            response = await self._incident_client.post(
+                "/api/v1/provider-events",
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "event_id": f"evt-{uuid4().hex}",
+                    "provider": result.provider.value,
+                    "outcome": result.outcome,
+                    "response_code": result.response_code,
+                    "http_status": result.status_code,
+                    "processing_time_ms": round(result.duration_seconds * 1000),
+                    "payment_method": result.payment_method.value,
+                    "region": result.region,
+                },
+            )
+            event_status = "accepted" if 200 <= response.status_code < 300 else "rejected"
+        except httpx.RequestError:
+            event_status = "failed"
+        self.metrics.provider_events.labels(provider=result.provider.value, outcome=result.outcome, status=event_status).inc()
 
     async def _bounded_send(self) -> TrafficResult:
         async with self._semaphore:
@@ -221,3 +255,5 @@ class TrafficGenerator:
             await asyncio.gather(*self._in_flight, return_exceptions=True)
         if self._owns_client:
             await self.client.aclose()
+        if self._owns_incident_client and self._incident_client is not None:
+            await self._incident_client.aclose()

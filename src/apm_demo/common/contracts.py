@@ -38,6 +38,8 @@ class ScenarioName(StrEnum):
     NORMAL = "normal"
     SLOW_PROVIDER = "slow-provider"
     PROVIDER_ERRORS = "provider-errors"
+    BUSINESS_DECLINES = "business-declines"
+    UNKNOWN_PROVIDER_ERROR = "unknown-provider-error"
     PROVIDER_TIMEOUT = "provider-timeout"
     HEALTHCHECK_DOWN = "healthcheck-down"
     HEALTHCHECK_TIMEOUT = "healthcheck-timeout"
@@ -66,6 +68,7 @@ class ProviderBehavior(BaseModel):
     soft_decline_rate: Probability = 0.03
     hard_decline_rate: Probability = 0.01
     provider_error_rate: Probability = 0.02
+    provider_error_code: str = Field(default="UPSTREAM_ERROR", min_length=1, max_length=48, pattern=r"^[A-Za-z0-9_.-]+$")
 
     @model_validator(mode="after")
     def validate_response_distribution(self) -> "ProviderBehavior":
@@ -96,6 +99,7 @@ class ProviderBehaviorPatch(BaseModel):
     soft_decline_rate: Probability | None = None
     hard_decline_rate: Probability | None = None
     provider_error_rate: Probability | None = None
+    provider_error_code: str | None = Field(default=None, min_length=1, max_length=48, pattern=r"^[A-Za-z0-9_.-]+$")
 
     def apply_to(self, behavior: ProviderBehavior) -> ProviderBehavior:
         return ProviderBehavior.model_validate(

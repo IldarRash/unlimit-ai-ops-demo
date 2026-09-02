@@ -45,12 +45,28 @@ def test_grafana_dashboard_covers_required_observability_signals() -> None:
     assert dashboard["uid"] == "apm-provider-observability"
     assert {
         "Success rate by provider",
-        "Client-observed p95 latency",
+        "Client vs provider p95 latency",
         "Declines, errors, and timeouts",
         "Provider health observed by client",
+        "Traffic generator state",
+        "Actual vs target traffic",
+        "Business declines: soft vs hard",
+        "Technical failures: errors and timeouts",
+        "Active provider scenario",
+        "Applied provider scenarios",
+        "Configured provider health mode",
     }.issubset(titles)
     assert "histogram_quantile(0.95" in expressions
     assert "apm_client_provider_health" in expressions
+    assert "apm_provider_request_duration_seconds_bucket" in expressions
+    assert "apm_generator_enabled" in expressions
+    assert "apm_generator_target_requests_per_second" in expressions
+    assert "soft-decline|hard-decline" in expressions
+    assert "provider-error|timeout|transport-error" in expressions
+    assert "apm_provider_configured_error_ratio" in expressions
+    assert "apm_demo_active_scenario" in expressions
+    assert "apm_demo_scenario_applied_total" in expressions
+    assert "apm_provider_configured_health_mode" in expressions
     assert "apm_client_timeouts" not in expressions  # counted via bounded outcome label
     assert dashboard["refresh"] == "5s"
 
@@ -115,3 +131,19 @@ def test_incident_pipeline_dashboard_covers_operational_signals() -> None:
     assert "incident_pipeline_alerts_total" in expressions
     assert "incident_pipeline_processing_seconds_bucket" in expressions
     assert "incident_pipeline_llm_circuit_open" in expressions
+    assert "incident_pipeline_provider_events_total" in expressions
+    assert "incident_pipeline_rejections_total" in expressions
+    assert "apm_generator_provider_events_total" in expressions
+
+
+def test_business_decline_alert_separates_commercial_from_technical_failures() -> None:
+    rules = yaml.safe_load(
+        (ROOT / "infra/prometheus/alert.rules.yml").read_text(encoding="utf-8")
+    )
+    alerts = {rule["alert"]: rule for rule in rules["groups"][0]["rules"]}
+
+    business_decline = alerts["ProviderBusinessDeclineHigh"]
+    assert "soft-decline|hard-decline" in business_decline["expr"]
+    assert "apm_client_requests_total" in business_decline["expr"]
+    assert business_decline["for"] == "1m"
+    assert business_decline["labels"]["severity"] == "warning"

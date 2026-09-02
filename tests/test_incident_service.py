@@ -3,13 +3,17 @@ import pytest
 from apm_demo.common.contracts import ProviderId
 from apm_demo.incidents.application.detection import AnomalyDetector
 from apm_demo.incidents.application.service import AnalyzeProviderIncident
-from apm_demo.incidents.domain import AuditEventType, MetricSnapshot
+from apm_demo.incidents.domain import AnalysisProvider, AuditEventType, CauseHypothesis, IncidentAnalysis, MetricSnapshot, RemediationAction
 from apm_demo.incidents.infrastructure import (
     DeterministicMetricsSource,
     InMemoryAuditLog,
     InMemoryIncidentRepository,
-    MockIncidentAnalyzer,
 )
+
+
+class FakeAnalyzer:
+    async def analyze(self, evidence):
+        return IncidentAnalysis(headline="test", summary="test", impact="test", probable_causes=("test",), causes=(CauseHypothesis(category="technical", title="test", why="test", evidence_refs=("snapshot",)),), recommended_actions=(RemediationAction(priority=1, title="test", rationale="test"),), confidence=0.5, generated_by=AnalysisProvider.OPENAI, model="fake")
 
 
 def degraded_snapshot() -> MetricSnapshot:
@@ -35,7 +39,7 @@ async def test_service_correlates_repeated_incident_and_records_audit() -> None:
             {ProviderId.ATLAS_PAY: degraded_snapshot()}
         ),
         detector=AnomalyDetector(),
-        analyzer=MockIncidentAnalyzer(),
+        analyzer=FakeAnalyzer(),
         incidents=repository,
         audit_log=audit_log,
     )
@@ -68,7 +72,7 @@ async def test_service_skips_analysis_when_no_signal_is_detected() -> None:
     service = AnalyzeProviderIncident(
         metrics=DeterministicMetricsSource({ProviderId.ATLAS_PAY: healthy}),
         detector=AnomalyDetector(),
-        analyzer=MockIncidentAnalyzer(),
+        analyzer=FakeAnalyzer(),
         incidents=repository,
         audit_log=InMemoryAuditLog(),
     )

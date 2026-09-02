@@ -22,6 +22,8 @@ class DetectionThresholds(BaseModel):
     critical_error_rate: float = Field(default=0.15, gt=0, le=1)
     warning_timeout_rate: float = Field(default=0.03, gt=0, le=1)
     critical_timeout_rate: float = Field(default=0.10, gt=0, le=1)
+    warning_decline_rate: float = Field(default=0.10, gt=0, le=1)
+    critical_decline_rate: float = Field(default=0.25, gt=0, le=1)
 
     @model_validator(mode="after")
     def validate_warning_before_critical(self) -> "DetectionThresholds":
@@ -29,6 +31,7 @@ class DetectionThresholds(BaseModel):
             (self.warning_p95_latency_ms, self.critical_p95_latency_ms, "latency"),
             (self.warning_error_rate, self.critical_error_rate, "error rate"),
             (self.warning_timeout_rate, self.critical_timeout_rate, "timeout rate"),
+            (self.warning_decline_rate, self.critical_decline_rate, "decline rate"),
         )
         for warning, critical, label in pairs:
             if warning >= critical:
@@ -91,6 +94,13 @@ class AnomalyDetector:
                 self.thresholds.warning_timeout_rate,
                 self.thresholds.critical_timeout_rate,
                 "timeout rate",
+            ),
+            (
+                SignalType.DECLINE_RATE,
+                1 - snapshot.success_rate - snapshot.error_rate - snapshot.timeout_rate,
+                self.thresholds.warning_decline_rate,
+                self.thresholds.critical_decline_rate,
+                "decline rate",
             ),
         ):
             severity, threshold = self._severity(value, warning, critical)

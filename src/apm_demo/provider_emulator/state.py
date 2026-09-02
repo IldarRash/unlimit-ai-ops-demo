@@ -85,12 +85,11 @@ class ProviderRuntime:
     ) -> ProviderBehavior:
         async with self._lock:
             baseline = BASELINE_BEHAVIORS[provider]
-            current = self._behaviors[provider]
 
             if scenario in (ScenarioName.NORMAL, ScenarioName.RECOVER):
                 updated = baseline.model_copy(deep=True)
             elif scenario is ScenarioName.SLOW_PROVIDER:
-                updated = current.model_copy(
+                updated = baseline.model_copy(
                     update={
                         "base_latency_ms": 1_600,
                         "jitter_ms": 450,
@@ -98,7 +97,7 @@ class ProviderRuntime:
                     }
                 )
             elif scenario is ScenarioName.PROVIDER_ERRORS:
-                updated = current.model_copy(
+                updated = baseline.model_copy(
                     update={
                         "success_rate": 0.42,
                         "soft_decline_rate": 0.08,
@@ -106,16 +105,35 @@ class ProviderRuntime:
                         "provider_error_rate": 0.45,
                     }
                 )
+            elif scenario is ScenarioName.BUSINESS_DECLINES:
+                updated = baseline.model_copy(
+                    update={
+                        "success_rate": 0.44,
+                        "soft_decline_rate": 0.38,
+                        "hard_decline_rate": 0.16,
+                        "provider_error_rate": 0.02,
+                    }
+                )
+            elif scenario is ScenarioName.UNKNOWN_PROVIDER_ERROR:
+                updated = baseline.model_copy(
+                    update={
+                        "success_rate": 0.42,
+                        "soft_decline_rate": 0.08,
+                        "hard_decline_rate": 0.05,
+                        "provider_error_rate": 0.45,
+                        "provider_error_code": "UNMAPPED_PROVIDER_FAILURE",
+                    }
+                )
             elif scenario is ScenarioName.PROVIDER_TIMEOUT:
-                updated = current.model_copy(
+                updated = baseline.model_copy(
                     update={"timeout_rate": 0.65, "timeout_delay_ms": 5_000}
                 )
             elif scenario is ScenarioName.HEALTHCHECK_DOWN:
-                updated = current.model_copy(
+                updated = baseline.model_copy(
                     update={"health_mode": HealthMode.UNHEALTHY}
                 )
             elif scenario is ScenarioName.HEALTHCHECK_TIMEOUT:
-                updated = current.model_copy(
+                updated = baseline.model_copy(
                     update={
                         "health_mode": HealthMode.TIMEOUT,
                         "timeout_delay_ms": 5_000,

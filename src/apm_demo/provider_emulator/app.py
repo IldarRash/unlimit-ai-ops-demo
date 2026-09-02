@@ -24,7 +24,7 @@ from apm_demo.common.contracts import (
     select_non_timeout_outcome,
 )
 from apm_demo.provider_emulator.metrics import ProviderMetrics
-from apm_demo.provider_emulator.state import ProviderRuntime
+from apm_demo.provider_emulator.state import BASELINE_BEHAVIORS, ProviderRuntime
 
 
 Sleep = Callable[[float], Awaitable[None]]
@@ -48,11 +48,14 @@ def create_app(
     runtime = runtime or ProviderRuntime()
     metrics = metrics or ProviderMetrics()
     rng = rng or random.Random()
+    for provider, behavior in BASELINE_BEHAVIORS.items():
+        metrics.update_behavior(provider, behavior)
+        metrics.set_active_scenario(provider, ScenarioName.NORMAL)
 
     app = FastAPI(
         title="Synthetic APM Provider Emulator",
         version="0.1.0",
-        description="Configurable mock APM providers for latency and failure demos.",
+        description="Configurable synthetic APM providers for latency and failure demos.",
     )
 
     app.state.runtime = runtime
@@ -107,6 +110,7 @@ def create_app(
     ) -> ScenarioApplied:
         behavior = await runtime.apply_scenario(scenario, request.provider)
         metrics.update_behavior(request.provider, behavior)
+        metrics.record_scenario(request.provider, scenario)
         return ScenarioApplied(
             scenario=scenario,
             provider=request.provider,
@@ -187,7 +191,11 @@ def create_app(
             transaction_id=request.transaction_id,
             provider=provider,
             outcome=outcome,
-            response_code=RESPONSE_CODES[outcome],
+            response_code=(
+                behavior.provider_error_code
+                if outcome is PaymentOutcome.PROVIDER_ERROR
+                else RESPONSE_CODES[outcome]
+            ),
             processing_time_ms=delay_ms,
         )
 

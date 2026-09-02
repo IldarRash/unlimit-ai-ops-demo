@@ -26,12 +26,12 @@
       "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
       "targets": [
         {
-          "expr": "sum by (classification) (increase(incident_pipeline_alerts_total[15m]))",
+          "expr": "sum by (classification) (increase(incident_pipeline_alerts_total{classification=~\"known|unknown|unavailable\"}[15m]))",
           "legendFormat": "{{classification}}",
           "refId": "A"
         }
       ],
-      "title": "Incident classifications",
+      "title": "Incident classifications: catalog, unknown, unavailable",
       "type": "timeseries"
     },
     {
@@ -73,6 +73,43 @@
       ],
       "title": "Connected operator streams",
       "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 6,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "targets": [
+        {"expr": "sum by (provider, outcome) (increase(incident_pipeline_provider_events_total[15m]))", "legendFormat": "{{provider}} · {{outcome}}", "refId": "A"}
+      ],
+      "title": "Provider-event ingress by outcome",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 7,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "targets": [
+        {"expr": "sum by (outcome) (increase(incident_pipeline_deliveries_total[15m]))", "legendFormat": "{{outcome}}", "refId": "A"},
+        {"expr": "sum by (reason) (increase(incident_pipeline_rejections_total[15m]))", "legendFormat": "rejected · {{reason}}", "refId": "B"}
+      ],
+      "title": "Alert delivery and ingress rejections",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+      "id": 8,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "targets": [
+        {"expr": "sum by (provider, outcome, status) (increase(apm_generator_provider_events_total[15m]))", "legendFormat": "{{provider}} · {{outcome}} · {{status}}", "refId": "A"}
+      ],
+      "title": "Provider-event delivery status",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",

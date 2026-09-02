@@ -24,7 +24,7 @@ from apm_demo.incidents.domain import (
 from apm_demo.incidents.infrastructure.sqlite import CatalogAmbiguityError
 
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _MIGRATION_LOCK = "apm_demo_incidents_schema"
 
 
@@ -64,15 +64,20 @@ class PostgresIncidentStore:
                     )
                     """
                 )
-                migration = await connection.execute(
-                    "SELECT 1 FROM schema_migrations WHERE version = %s",
-                    (_SCHEMA_VERSION,),
-                )
-                if await migration.fetchone() is None:
-                    await self._create_schema(connection)
+                for version in range(1, _SCHEMA_VERSION + 1):
+                    migration = await connection.execute(
+                        "SELECT 1 FROM schema_migrations WHERE version = %s",
+                        (version,),
+                    )
+                    if await migration.fetchone() is not None:
+                        continue
+                    if version == 1:
+                        await self._create_schema(connection)
+                    elif version == 2:
+                        await self._migrate_legacy_analysis_provider(connection)
                     await connection.execute(
                         "INSERT INTO schema_migrations(version) VALUES (%s)",
-                        (_SCHEMA_VERSION,),
+                        (version,),
                     )
         self._initialized = True
 
@@ -176,6 +181,30 @@ class PostgresIncidentStore:
         )
         for statement in statements:
             await connection.execute(statement)
+
+    @staticmethod
+    async def _migrate_legacy_analysis_provider(
+        connection: AsyncConnection[Any],
+    ) -> None:
+        await connection.execute(
+            """
+            UPDATE incidents
+            SET payload_json = jsonb_set(
+                jsonb_set(
+                    jsonb_set(
+                        payload_json,
+                        '{analysis,generated_by}',
+                        '"unavailable"'::jsonb
+                    ),
+                    '{analysis,classification}',
+                    '"unavailable"'::jsonb
+                ),
+                '{analysis,model}',
+                '"legacy-analysis-unavailable-v1"'::jsonb
+            )
+            WHERE payload_json #>> '{analysis,generated_by}' = 'mock'
+            """
+        )
 
     async def ping(self) -> bool:
         async with self._pool.connection() as connection:

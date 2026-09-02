@@ -29,12 +29,12 @@ class SignalType(StrEnum):
     LATENCY = "latency"
     ERROR_RATE = "error-rate"
     TIMEOUT_RATE = "timeout-rate"
+    DECLINE_RATE = "decline-rate"
     HEALTH = "health"
 
 
 class AnalysisProvider(StrEnum):
     CATALOG = "catalog"
-    MOCK = "mock"
     OPENAI = "openai"
     UNAVAILABLE = "unavailable"
 
@@ -265,6 +265,9 @@ class IncidentAnalysis(BaseModel):
     summary: str = Field(min_length=1, max_length=1_000)
     impact: str = Field(min_length=1, max_length=600)
     probable_causes: tuple[str, ...] = Field(min_length=1, max_length=5)
+    # Empty is accepted only when loading historical stored records. New analyzers
+    # and deterministic classifications always provide causal hypotheses.
+    causes: tuple["CauseHypothesis", ...] = Field(default=(), max_length=5)
     recommended_actions: tuple[RemediationAction, ...] = Field(
         min_length=1, max_length=5
     )
@@ -279,6 +282,15 @@ class IncidentAnalysis(BaseModel):
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     generated_at: datetime = Field(default_factory=utc_now)
+
+
+class CauseHypothesis(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    category: Literal["business", "technical"]
+    title: str = Field(min_length=1, max_length=160)
+    why: str = Field(min_length=1, max_length=600)
+    evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=24)
 
 
 class IncidentRecord(BaseModel):

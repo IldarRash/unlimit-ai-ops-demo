@@ -20,10 +20,11 @@ from apm_demo.incidents.domain import (
     MetricSnapshot,
     ProviderEvent,
     RemediationAction,
+    CauseHypothesis,
+    IncidentAnalysis,
 )
 from apm_demo.incidents.infrastructure import (
     DeterministicMetricsSource,
-    MockIncidentAnalyzer,
     SQLiteIncidentStore,
 )
 
@@ -34,11 +35,33 @@ START = datetime(2026, 8, 1, 12, tzinfo=timezone.utc)
 class CountingAnalyzer:
     def __init__(self) -> None:
         self.calls = 0
-        self._delegate = MockIncidentAnalyzer()
 
     async def analyze(self, evidence: EvidenceBundle):  # type: ignore[no-untyped-def]
         self.calls += 1
-        return await self._delegate.analyze(evidence)
+        return IncidentAnalysis(
+            headline="Unknown provider degradation",
+            summary="Synthetic local analysis.",
+            impact="Payments may fail.",
+            probable_causes=("Unknown provider condition",),
+            causes=(
+                CauseHypothesis(
+                    category="technical",
+                    title="Unknown provider condition",
+                    why="The provider event is not present in the known-error catalog.",
+                    evidence_refs=(f"event:{evidence.provider_events[0].event_id}",),
+                ),
+            ),
+            recommended_actions=(
+                RemediationAction(
+                    priority=1,
+                    title="Inspect normalized evidence",
+                    rationale="Validate the unknown response before mitigation.",
+                ),
+            ),
+            confidence=0.7,
+            generated_by=AnalysisProvider.OPENAI,
+            model="fake-openai",
+        )
 
 
 def snapshot() -> MetricSnapshot:

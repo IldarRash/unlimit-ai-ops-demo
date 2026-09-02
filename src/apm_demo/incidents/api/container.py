@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from apm_demo.common.contracts import ProviderId
-from apm_demo.incidents.api.config import AnalyzerMode, IncidentSettings, MetricsMode
+from apm_demo.incidents.api.config import IncidentSettings, MetricsMode
 from apm_demo.incidents.application.detection import AnomalyDetector, DetectionThresholds
 from apm_demo.incidents.application.classification import IncidentClassifier
 from apm_demo.incidents.application.events import IncidentEventBus
@@ -20,7 +20,6 @@ from apm_demo.incidents.domain import (
 )
 from apm_demo.incidents.infrastructure import (
     DeterministicMetricsSource,
-    MockIncidentAnalyzer,
     OpenAIIncidentAnalyzer,
     PrometheusMetricsSource,
     PostgresIncidentStore,
@@ -33,6 +32,7 @@ from apm_demo.incidents.ports.repositories import (
     KnownErrorCatalog,
     ProviderEventRepository,
 )
+from apm_demo.incidents.ports.analysis import IncidentAnalyzer
 
 from apm_demo.incidents.infrastructure.observability import PipelineMetrics
 
@@ -67,7 +67,9 @@ class IncidentContainer:
                 await close()
 
 
-def build_container(settings: IncidentSettings) -> IncidentContainer:
+def build_container(
+    settings: IncidentSettings, *, analyzer: IncidentAnalyzer | None = None
+) -> IncidentContainer:
     database_url = settings.database_url_value()
     store: SQLiteIncidentStore | PostgresIncidentStore
     store = (
@@ -86,6 +88,8 @@ def build_container(settings: IncidentSettings) -> IncidentContainer:
             critical_error_rate=settings.critical_error_rate,
             warning_timeout_rate=settings.warning_timeout_rate,
             critical_timeout_rate=settings.critical_timeout_rate,
+            warning_decline_rate=settings.warning_decline_rate,
+            critical_decline_rate=settings.critical_decline_rate,
         )
     )
     if settings.metrics_mode is MetricsMode.PROMETHEUS:
@@ -98,28 +102,30 @@ def build_container(settings: IncidentSettings) -> IncidentContainer:
         metrics = DeterministicMetricsSource(_demo_snapshots())
         metric_closeables = ()
 
-    if settings.analyzer_mode is AnalyzerMode.OPENAI:
-        assert settings.openai_api_key is not None
+    if analyzer is None:
         analyzer = OpenAIIncidentAnalyzer(
-            settings.openai_api_key.get_secret_value(),
+            settings.openai_api_key_value(),
             model=settings.openai_model,
+            requests_enabled=settings.openai_requests_enabled,
             timeout_seconds=settings.request_timeout_seconds,
             failure_threshold=settings.llm_failure_threshold,
             circuit_reset_seconds=settings.llm_circuit_reset_seconds,
         )
         analyzer_closeables: tuple[object, ...] = (analyzer,)
     else:
-        analyzer = MockIncidentAnalyzer()
         analyzer_closeables = ()
 
+    classifier = IncidentClassifier(catalog=store, analyzer=analyzer)
     service = AnalyzeProviderIncident(
         metrics=metrics,
         detector=detector,
         analyzer=analyzer,
         incidents=store,
         audit_log=store,
+        provider_events=store,
+        classifier=classifier,
+        event_limit=settings.provider_event_limit,
     )
-    classifier = IncidentClassifier(catalog=store, analyzer=analyzer)
     alert_pipeline = AlertIncidentPipeline(
         metrics=metrics,
         detector=detector,

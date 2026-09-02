@@ -54,3 +54,9 @@ class ClientMetrics:
             "Configured target request rate.",
             registry=self.registry,
         )
+        self.provider_events = Counter(
+            "apm_generator_provider_events_total",
+            "Best-effort normalized provider event deliveries.",
+            ("provider", "outcome", "status"),
+            registry=self.registry,
+        )

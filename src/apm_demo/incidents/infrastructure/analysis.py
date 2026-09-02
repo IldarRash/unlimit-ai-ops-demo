@@ -8,9 +8,9 @@ from time import monotonic
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from apm_demo.common.contracts import PROVIDER_BY_ID
 from apm_demo.incidents.domain import (
     AnalysisProvider,
+    CauseHypothesis,
     EvidenceBundle,
     IncidentAnalysis,
     IncidentSeverity,
@@ -28,6 +28,15 @@ Recommend reversible operator checks before mitigation. Return only the requeste
 PROMPT_VERSION = "incident-v2"
 
 
+class _ProposedCause(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: str = Field(pattern="^(business|technical)$")
+    title: str = Field(min_length=1, max_length=160)
+    why: str = Field(min_length=1, max_length=600)
+    evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=24)
+
+
 class _ProposedAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -43,56 +52,11 @@ class _StructuredAnalysis(BaseModel):
     summary: str = Field(min_length=1, max_length=1_000)
     impact: str = Field(min_length=1, max_length=600)
     probable_causes: tuple[str, ...] = Field(min_length=1, max_length=5)
+    causes: tuple[_ProposedCause, ...] = Field(min_length=1, max_length=5)
     recommended_actions: tuple[_ProposedAction, ...] = Field(
         min_length=1, max_length=5
     )
     confidence: float = Field(ge=0, le=1)
-
-
-class MockIncidentAnalyzer:
-    async def analyze(self, evidence: EvidenceBundle) -> IncidentAnalysis:
-        provider = evidence.snapshot.provider.value
-        provider_name = PROVIDER_BY_ID[evidence.snapshot.provider].display_name
-        signal_names = ", ".join(signal.signal_type.value for signal in evidence.signals)
-        highest = (
-            "critical"
-            if any(
-                signal.severity is IncidentSeverity.CRITICAL
-                for signal in evidence.signals
-            )
-            else "warning"
-        )
-        return IncidentAnalysis(
-            headline=f"{provider_name} provider degradation",
-            summary=(
-                f"Deterministic analysis detected {signal_names} signals for {provider}."
-            ),
-            impact=(
-                f"Payment traffic routed to {provider} may experience reduced "
-                f"reliability; current severity is {highest}."
-            ),
-            probable_causes=(
-                "Provider-side processing degradation",
-                "Network or upstream dependency instability",
-            ),
-            recommended_actions=(
-                RemediationAction(
-                    priority=1,
-                    title="Validate provider health and recent changes",
-                    rationale="Confirm the external dependency state before rerouting traffic.",
-                    safe_to_automate=False,
-                ),
-                RemediationAction(
-                    priority=2,
-                    title="Review routing exposure",
-                    rationale="Assess whether traffic should be reduced after operator approval.",
-                    safe_to_automate=False,
-                ),
-            ),
-            confidence=0.72,
-            generated_by=AnalysisProvider.MOCK,
-            model="deterministic-incident-analyzer-v1",
-        )
 
 
 class OpenAIIncidentAnalyzer:
@@ -103,6 +67,7 @@ class OpenAIIncidentAnalyzer:
         api_key: str,
         *,
         model: str,
+        requests_enabled: bool = False,
         base_url: str = "https://api.openai.com/v1",
         timeout_seconds: float = 20,
         max_attempts: int = 2,
@@ -118,6 +83,7 @@ class OpenAIIncidentAnalyzer:
         if failure_threshold < 1:
             raise ValueError("failure_threshold must be positive")
         self._model = model
+        self._requests_enabled = requests_enabled
         self._max_attempts = max_attempts
         self._failure_threshold = failure_threshold
         self._circuit_reset_seconds = circuit_reset_seconds
@@ -135,6 +101,8 @@ class OpenAIIncidentAnalyzer:
         self._owns_client = client is None
 
     async def analyze(self, evidence: EvidenceBundle) -> IncidentAnalysis:
+        if not self._requests_enabled:
+            raise AnalysisUnavailable("OpenAI requests are disabled by the runtime gate")
         async with self._state_lock:
             if monotonic() < self._circuit_open_until:
                 raise AnalysisUnavailable("OpenAI analysis circuit is open")
@@ -159,6 +127,7 @@ class OpenAIIncidentAnalyzer:
                     self._circuit_open_until = 0.0
                 return self._to_domain(
                     parsed,
+                    evidence=evidence,
                     request_id=response.headers.get("x-request-id"),
                     input_tokens=self._optional_int(usage.get("input_tokens")),
                     output_tokens=self._optional_int(usage.get("output_tokens")),
@@ -170,6 +139,7 @@ class OpenAIIncidentAnalyzer:
                 TypeError,
                 json.JSONDecodeError,
                 ValidationError,
+                ValueError,
             ) as error:
                 retryable = isinstance(error, httpx.TransportError) or (
                     isinstance(error, httpx.HTTPStatusError)
@@ -254,15 +224,22 @@ class OpenAIIncidentAnalyzer:
         self,
         parsed: _StructuredAnalysis,
         *,
+        evidence: EvidenceBundle,
         request_id: str | None,
         input_tokens: int | None,
         output_tokens: int | None,
     ) -> IncidentAnalysis:
+        allowed_refs = {"snapshot"}
+        allowed_refs.update(f"signal:{item.signal_type.value}" for item in evidence.signals)
+        allowed_refs.update(f"event:{item.event_id}" for item in evidence.provider_events)
+        if any(ref not in allowed_refs for cause in parsed.causes for ref in cause.evidence_refs):
+            raise ValueError("analysis referenced evidence outside the supplied bundle")
         return IncidentAnalysis(
             headline=parsed.headline,
             summary=parsed.summary,
             impact=parsed.impact,
             probable_causes=parsed.probable_causes,
+            causes=tuple(CauseHypothesis.model_validate(cause.model_dump()) for cause in parsed.causes),
             recommended_actions=tuple(
                 RemediationAction(
                     priority=action.priority,

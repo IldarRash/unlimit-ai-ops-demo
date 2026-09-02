@@ -26,7 +26,7 @@ Do not resemble neon cyberpunk monitoring software, a generic SaaS wall of ident
 2. Calm under pressure: establish hierarchy through structure and language, not visual alarm noise.
 3. Human authority is explicit: recommendations remain advisory and status changes are auditable.
 4. Progressive depth: make the incident state scannable first and investigation detail available without navigation churn.
-5. Operational honesty: distinguish deterministic detection, mock analysis, and live model analysis clearly.
+5. Operational honesty: distinguish deterministic catalog decisions, live model analysis, and analysis-unavailable states clearly.
 
 ## Accessibility & Inclusion
 

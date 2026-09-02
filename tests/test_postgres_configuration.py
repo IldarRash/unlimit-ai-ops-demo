@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import sqlite3
 
 import pytest
 import yaml
@@ -22,19 +24,28 @@ def test_blank_database_url_keeps_sqlite_fallback() -> None:
     assert IncidentSettings(database_url="  ").database_url_value() is None
 
 
+def test_openai_key_is_required_for_runtime_settings(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="OPENAI_API_KEY must be configured"):
+        IncidentSettings(_env_file=None)
+
+
 def test_database_url_accepts_railway_standard_environment_name(monkeypatch) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:password@db/app")
 
     assert IncidentSettings().database_url_value() == "postgresql://user:password@db/app"
 
 
-def test_container_selects_postgres_only_when_database_url_is_configured() -> None:
+def test_container_selects_postgres_only_when_database_url_is_configured(tmp_path) -> None:
     pytest.importorskip("psycopg")
     pytest.importorskip("psycopg_pool")
     from apm_demo.incidents.api.container import build_container
     from apm_demo.incidents.infrastructure import PostgresIncidentStore, SQLiteIncidentStore
 
-    sqlite = build_container(IncidentSettings(database_path="test-incidents.db"))
+    sqlite = build_container(
+        IncidentSettings(database_path=str(tmp_path / "incidents.db"))
+    )
     postgres = build_container(
         IncidentSettings(database_url="postgresql://user:password@db/app")
     )
@@ -56,3 +67,49 @@ def test_compose_runs_incident_api_against_postgres_secret() -> None:
     assert incident["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert "/ready" in incident["healthcheck"]["test"][-1]
     assert "incident-data" not in compose["volumes"]
+
+
+def test_sqlite_migrates_legacy_mock_analysis_to_unavailable(tmp_path) -> None:
+    from apm_demo.incidents.infrastructure import SQLiteIncidentStore
+
+    database = tmp_path / "legacy.db"
+    SQLiteIncidentStore(str(database))
+    legacy_payload = {
+        "analysis": {
+            "generated_by": "mock",
+            "classification": "unknown",
+            "model": "deterministic-incident-analyzer-v1",
+        }
+    }
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            INSERT INTO incidents(
+                incident_id, fingerprint, alert_fingerprint, status,
+                last_seen_at, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-incident",
+                "f" * 64,
+                None,
+                "resolved",
+                "2026-08-01T12:00:00+00:00",
+                json.dumps(legacy_payload),
+            ),
+        )
+
+    SQLiteIncidentStore(str(database))
+
+    with sqlite3.connect(database) as connection:
+        migrated = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM incidents WHERE incident_id = ?",
+                ("legacy-incident",),
+            ).fetchone()[0]
+        )
+    assert migrated["analysis"] == {
+        "generated_by": "unavailable",
+        "classification": "unavailable",
+        "model": "legacy-analysis-unavailable-v1",
+    }

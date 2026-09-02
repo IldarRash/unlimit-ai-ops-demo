@@ -177,11 +177,16 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum by (le, provider) (rate(apm_client_request_duration_seconds_bucket{provider=~\"$provider\"}[$__rate_interval])))",
-          "legendFormat": "{{provider}} p95",
+          "legendFormat": "{{provider}} client p95",
           "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, provider) (rate(apm_provider_request_duration_seconds_bucket{provider=~\"$provider\"}[$__rate_interval])))",
+          "legendFormat": "{{provider}} provider p95",
+          "refId": "B"
         }
       ],
-      "title": "Client-observed p95 latency",
+      "title": "Client vs provider p95 latency",
       "type": "timeseries"
     },
     {
@@ -266,10 +271,139 @@
           "expr": "apm_provider_configured_timeout_ratio{provider=~\"$provider\"}",
           "legendFormat": "{{provider}} timeout ratio",
           "refId": "B"
+        },
+        {
+          "expr": "apm_provider_configured_error_ratio{provider=~\"$provider\"}",
+          "legendFormat": "{{provider}} error ratio",
+          "refId": "C"
         }
       ],
       "title": "Configured provider degradation",
       "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"options": {"0": {"color": "red", "index": 0, "text": "STOPPED"}, "1": {"color": "green", "index": 1, "text": "RUNNING"}}, "type": "value"}
+          ],
+          "max": 1,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 27},
+      "id": 10,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [
+        {"expr": "apm_generator_enabled", "legendFormat": "traffic generator", "refId": "A"}
+      ],
+      "title": "Traffic generator state",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"decimals": 2, "unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 27},
+      "id": 11,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [
+        {"expr": "apm_generator_target_requests_per_second", "legendFormat": "target RPS", "refId": "A"}
+      ],
+      "title": "Traffic target",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 27},
+      "id": 12,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "sum(rate(apm_client_requests_total{provider=~\"$provider\"}[$__rate_interval]))", "legendFormat": "actual client RPS", "refId": "A"},
+        {"expr": "apm_generator_target_requests_per_second", "legendFormat": "target RPS", "refId": "B"}
+      ],
+      "title": "Actual vs target traffic",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 31},
+      "id": 13,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "sum by (provider, outcome) (rate(apm_client_requests_total{provider=~\"$provider\",outcome=~\"soft-decline|hard-decline\"}[$__rate_interval]))", "legendFormat": "{{provider}} · {{outcome}}", "refId": "A"}
+      ],
+      "title": "Business declines: soft vs hard",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 31},
+      "id": 14,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "sum by (provider, outcome) (rate(apm_client_requests_total{provider=~\"$provider\",outcome=~\"provider-error|timeout|transport-error\"}[$__rate_interval]))", "legendFormat": "{{provider}} · {{outcome}}", "refId": "A"}
+      ],
+      "title": "Technical failures: errors and timeouts",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"options": {"0": {"color": "red", "index": 0, "text": "INACTIVE"}, "1": {"color": "green", "index": 1, "text": "ACTIVE"}}, "type": "value"}
+          ],
+          "max": 1,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 39},
+      "id": 15,
+      "options": {"alignValue": "left", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": false}, "mergeValues": true, "rowHeight": 0.9, "showValue": "auto", "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"expr": "apm_demo_active_scenario{provider=~\"$provider\"}", "legendFormat": "{{provider}} · {{scenario}}", "refId": "A"}
+      ],
+      "title": "Active provider scenario",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 39},
+      "id": 16,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "sum by (provider, scenario) (increase(apm_demo_scenario_applied_total{provider=~\"$provider\"}[$__rate_interval]))", "legendFormat": "{{provider}} · {{scenario}}", "refId": "A"}
+      ],
+      "title": "Applied provider scenarios",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"options": {"0": {"color": "red", "index": 0, "text": "INACTIVE"}, "1": {"color": "green", "index": 1, "text": "ACTIVE"}}, "type": "value"}
+          ],
+          "max": 1,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 46},
+      "id": 17,
+      "options": {"alignValue": "left", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": false}, "mergeValues": true, "rowHeight": 0.9, "showValue": "auto", "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"expr": "apm_provider_configured_health_mode{provider=~\"$provider\"}", "legendFormat": "{{provider}} · {{mode}}", "refId": "A"}
+      ],
+      "title": "Configured provider health mode",
+      "type": "state-timeline"
     }
   ],
   "refresh": "5s",

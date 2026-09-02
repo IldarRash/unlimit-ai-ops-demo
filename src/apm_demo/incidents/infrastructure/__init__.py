@@ -7,7 +7,6 @@ from apm_demo.incidents.infrastructure.metrics import (
 )
 from apm_demo.incidents.infrastructure.analysis import (
     AnalysisUnavailable,
-    MockIncidentAnalyzer,
     OpenAIIncidentAnalyzer,
 )
 from apm_demo.incidents.infrastructure.repositories import (
@@ -24,7 +23,6 @@ __all__ = [
     "AnalysisUnavailable",
     "DeterministicMetricsSource",
     "MetricsUnavailable",
-    "MockIncidentAnalyzer",
     "InMemoryAuditLog",
     "InMemoryIncidentRepository",
     "OpenAIIncidentAnalyzer",

@@ -143,6 +143,21 @@ class SQLiteIncidentStore:
                 ON incident_feedback(incident_id, created_at);
             """
         )
+        legacy_rows = connection.execute(
+            "SELECT incident_id, payload_json FROM incidents"
+        ).fetchall()
+        for incident_id, raw_payload in legacy_rows:
+            payload = json.loads(raw_payload)
+            analysis = payload.get("analysis", {})
+            if analysis.get("generated_by") != "mock":
+                continue
+            analysis["generated_by"] = "unavailable"
+            analysis["classification"] = "unavailable"
+            analysis["model"] = "legacy-analysis-unavailable-v1"
+            connection.execute(
+                "UPDATE incidents SET payload_json = ? WHERE incident_id = ?",
+                (json.dumps(payload, separators=(",", ":")), incident_id),
+            )
 
     async def ping(self) -> bool:
         return await self._read(

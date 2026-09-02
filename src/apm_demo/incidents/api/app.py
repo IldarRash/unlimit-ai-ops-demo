@@ -11,6 +11,7 @@ from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from fastapi.responses import FileResponse
@@ -31,6 +32,8 @@ from apm_demo.incidents.api.logging import configure_logging
 from apm_demo.incidents.api.schemas import (
     AnalyzeIncidentRequest,
     AnalyzeIncidentResponse,
+    DemoScenarioRequest,
+    DemoTrafficPatch,
     IncidentFeedbackRequest,
     UpdateIncidentStatusRequest,
 )
@@ -53,17 +56,22 @@ from apm_demo.incidents.infrastructure import (
     CatalogAmbiguityError,
     MetricsUnavailable,
 )
+from apm_demo.incidents.ports import IncidentAnalyzer
 
 
 logger = logging.getLogger("apm_demo.incidents.api")
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
 
 
-def create_app(settings: IncidentSettings | None = None) -> FastAPI:
+def create_app(
+    settings: IncidentSettings | None = None,
+    *,
+    analyzer: IncidentAnalyzer | None = None,
+) -> FastAPI:
     configure_logging()
     resolved_settings = settings or IncidentSettings()
     surface_auth = SurfaceAuth.from_environment()
-    container = build_container(resolved_settings)
+    container = build_container(resolved_settings, analyzer=analyzer)
     storage_backend = (
         "postgresql" if resolved_settings.database_url_value() else "sqlite-wal"
     )
@@ -177,17 +185,58 @@ def create_app(settings: IncidentSettings | None = None) -> FastAPI:
         )
 
     @app.get("/api/v1/runtime")
-    async def runtime() -> dict[str, str]:
+    async def runtime() -> dict[str, object]:
+        grafana = resolved_settings.grafana_public_url.rstrip("/")
         return {
             "metrics_mode": resolved_settings.metrics_mode.value,
-            "analyzer_mode": resolved_settings.analyzer_mode.value,
-            "model": (
-                resolved_settings.openai_model
-                if resolved_settings.analyzer_mode.value == "openai"
-                else "deterministic-incident-analyzer-v1"
-            ),
+            "analyzer_mode": "openai",
+            "openai_requests_enabled": resolved_settings.openai_requests_enabled,
+            "model": resolved_settings.openai_model,
             "storage": storage_backend,
+            "grafana_provider_dashboard_url": (
+                f"{grafana}/d/apm-provider-observability/apm-provider-observability"
+            ),
+            "grafana_incident_dashboard_url": (
+                f"{grafana}/d/incident-intelligence-pipeline/incident-intelligence-pipeline"
+            ),
         }
+
+    @app.get("/api/v1/demo/control")
+    async def demo_control() -> dict[str, object]:
+        generator, providers = await asyncio.gather(
+            _upstream_json(
+                "GET",
+                f"{resolved_settings.traffic_generator_url.rstrip('/')}/admin/generator",
+                timeout=resolved_settings.request_timeout_seconds,
+            ),
+            _upstream_json(
+                "GET",
+                f"{resolved_settings.provider_emulator_url.rstrip('/')}/admin/providers",
+                timeout=resolved_settings.request_timeout_seconds,
+            ),
+        )
+        return {"generator": generator, "providers": providers}
+
+    @app.patch("/api/v1/demo/traffic")
+    async def demo_traffic(payload: DemoTrafficPatch) -> dict[str, object]:
+        return await _upstream_json(
+            "PATCH",
+            f"{resolved_settings.traffic_generator_url.rstrip('/')}/admin/generator",
+            timeout=resolved_settings.request_timeout_seconds,
+            json_body=payload.model_dump(exclude_none=True),
+        )
+
+    @app.post("/api/v1/demo/scenarios")
+    async def demo_scenario(payload: DemoScenarioRequest) -> dict[str, object]:
+        return await _upstream_json(
+            "POST",
+            (
+                f"{resolved_settings.provider_emulator_url.rstrip('/')}/admin/scenarios/"
+                f"{payload.scenario.value}"
+            ),
+            timeout=resolved_settings.request_timeout_seconds,
+            json_body={"provider": payload.provider.value},
+        )
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
@@ -468,4 +517,22 @@ def _require_admin(request: Request, expected: str) -> None:
         raise HTTPException(status_code=401, detail="invalid catalog admin credential")
 
 
-app = create_app()
+async def _upstream_json(
+    method: str,
+    url: str,
+    *,
+    timeout: float,
+    json_body: dict[str, object] | None = None,
+) -> dict[str, object] | list[object]:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.request(method, url, json=json_body)
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise HTTPException(
+            status_code=502, detail="demo control service unavailable"
+        ) from error
+    if not isinstance(payload, (dict, list)):
+        raise HTTPException(status_code=502, detail="invalid demo control response")
+    return payload

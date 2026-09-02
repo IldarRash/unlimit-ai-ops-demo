@@ -10,6 +10,7 @@ from apm_demo.incidents.application.detection import (
     incident_fingerprint,
     incident_severity,
 )
+from apm_demo.incidents.application.classification import IncidentClassifier
 from apm_demo.incidents.domain import (
     AuditEventType,
     EvidenceBundle,
@@ -24,6 +25,7 @@ from apm_demo.incidents.ports import (
     IncidentAnalyzer,
     IncidentRepository,
     MetricsSource,
+    ProviderEventRepository,
 )
 
 
@@ -36,6 +38,9 @@ class AnalyzeProviderIncident:
         analyzer: IncidentAnalyzer,
         incidents: IncidentRepository,
         audit_log: AuditLog,
+        provider_events: ProviderEventRepository | None = None,
+        classifier: IncidentClassifier | None = None,
+        event_limit: int = 20,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
         self._metrics = metrics
@@ -43,6 +48,9 @@ class AnalyzeProviderIncident:
         self._analyzer = analyzer
         self._incidents = incidents
         self._audit_log = audit_log
+        self._provider_events = provider_events
+        self._classifier = classifier
+        self._event_limit = event_limit
         self._now = now
 
     async def execute(
@@ -55,9 +63,15 @@ class AnalyzeProviderIncident:
         if not signals:
             return None
 
+        provider_events = (
+            await self._provider_events.list_recent_events(provider, limit=self._event_limit)
+            if self._provider_events is not None
+            else ()
+        )
         evidence = EvidenceBundle(
             snapshot=snapshot,
             signals=signals,
+            provider_events=provider_events,
             source=type(self._metrics).__name__,
             collected_at=self._now(),
         )
@@ -67,7 +81,7 @@ class AnalyzeProviderIncident:
         if existing:
             return await self._correlate(existing, evidence, severity)
 
-        analysis = await self._analyzer.analyze(evidence)
+        analysis = await self._classify(evidence)
         observed_at = self._now()
         incident = IncidentRecord(
             incident_id=f"inc_{uuid4().hex}",
@@ -94,9 +108,7 @@ class AnalyzeProviderIncident:
         severity: IncidentSeverity,
     ) -> IncidentRecord:
         escalated = self._severity_rank(severity) > self._severity_rank(existing.severity)
-        analysis = (
-            await self._analyzer.analyze(evidence) if escalated else existing.analysis
-        )
+        analysis = await self._classify(evidence) if escalated else existing.analysis
         updated = existing.model_copy(
             update={
                 "severity": severity,
@@ -113,6 +125,11 @@ class AnalyzeProviderIncident:
             {"severity": severity.value, "occurrences": str(stored.occurrences)},
         )
         return stored
+
+    async def _classify(self, evidence: EvidenceBundle):
+        if self._classifier is None:
+            return await self._analyzer.analyze(evidence)
+        return (await self._classifier.classify(evidence)).analysis
 
     async def _audit(
         self, incident_id: str, event_type: AuditEventType, details: dict[str, str]
