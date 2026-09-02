@@ -20,6 +20,7 @@ from apm_demo.incidents.domain import (
     MetricSnapshot,
     ProviderEvent,
     RemediationAction,
+    ResponseInsightSource,
     CauseHypothesis,
     IncidentAnalysis,
 )
@@ -133,6 +134,8 @@ def known_rule() -> KnownErrorRule:
         rule_id="atlas-upstream-error",
         provider=ProviderId.ATLAS_PAY,
         response_code="UPSTREAM_ERROR",
+        response_name="Upstream processing error",
+        response_description="AtlasPay could not complete upstream processing.",
         outcome=PaymentOutcome.PROVIDER_ERROR,
         headline="Known AtlasPay upstream error",
         summary="The provider returned a documented upstream error.",
@@ -173,6 +176,16 @@ async def test_known_error_bypasses_llm_and_replay_survives_restart(tmp_path) ->
     assert incident is not None
     assert incident.analysis.generated_by is AnalysisProvider.CATALOG
     assert incident.analysis.classification is ClassificationKind.KNOWN
+    assert incident.analysis.conclusion is not None
+    assert incident.analysis.conclusion.evidence_refs == (
+        "snapshot",
+        "event:pev_known",
+    )
+    assert incident.analysis.response_code_insights[0].response_code == "UPSTREAM_ERROR"
+    assert (
+        incident.analysis.response_code_insights[0].source
+        is ResponseInsightSource.CATALOG
+    )
     assert analyzer.calls == 0
 
     restarted_store = SQLiteIncidentStore(database)

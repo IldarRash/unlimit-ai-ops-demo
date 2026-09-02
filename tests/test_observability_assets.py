@@ -43,6 +43,7 @@ def test_grafana_dashboard_covers_required_observability_signals() -> None:
     )
 
     assert dashboard["uid"] == "apm-provider-observability"
+    assert dashboard["version"] >= 2
     assert {
         "Success rate by provider",
         "Client vs provider p95 latency",
@@ -50,8 +51,8 @@ def test_grafana_dashboard_covers_required_observability_signals() -> None:
         "Provider health observed by client",
         "Traffic generator state",
         "Actual vs target traffic",
-        "Business declines: soft vs hard",
-        "Technical failures: errors and timeouts",
+        "Business decline count by interval",
+        "Technical failure count by interval",
         "Active provider scenario",
         "Applied provider scenarios",
         "Provider health mode history",
@@ -182,3 +183,31 @@ def test_business_decline_alert_separates_commercial_from_technical_failures() -
     assert "apm_client_requests_total" in business_decline["expr"]
     assert business_decline["for"] == "1m"
     assert business_decline["labels"]["severity"] == "warning"
+
+
+def test_failure_dashboards_show_transaction_counts_not_rates() -> None:
+    dashboard = json.loads(
+        (ROOT / "infra/grafana/dashboards/apm-provider-observability.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    panels = {panel["id"]: panel for panel in dashboard["panels"]}
+
+    for panel_id in (13, 14):
+        panel = panels[panel_id]
+        assert panel["fieldConfig"]["defaults"]["unit"] == "short"
+        assert panel["fieldConfig"]["defaults"]["decimals"] == 0
+        assert "increase(" in panel["targets"][0]["expr"]
+        assert "rate(" not in panel["targets"][0]["expr"]
+
+
+def test_incident_console_exposes_verified_counts_and_response_provenance() -> None:
+    app = (ROOT / "src/apm_demo/incidents/web/app.js").read_text(encoding="utf-8")
+
+    assert "Total attempts" in app
+    assert "Affected / all traffic" in app
+    assert "Affected share by payment method" in app
+    assert "Response-code evidence" in app
+    assert "Internal catalog" in app
+    assert "OpenAI hypothesis" in app
+    assert "not full traffic" in app

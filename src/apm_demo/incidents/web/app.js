@@ -82,10 +82,28 @@ function formatTime(value) {
 }
 
 function formatRatio(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "N/A";
+  }
   return new Intl.NumberFormat(undefined, {
     style: "percent",
     maximumFractionDigits: 1,
   }).format(value);
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value || 0);
+}
+
+function formatWindow(start, end) {
+  const formatter = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  return `${formatter.format(new Date(start))} – ${formatter.format(new Date(end))}`;
 }
 
 function showToast(message, tone = "info") {
@@ -397,6 +415,8 @@ function renderDetail() {
 
   const snapshot = incident.evidence.snapshot;
   const analysis = incident.analysis;
+  const counts = normalizedOutcomeCounts(snapshot);
+  const declineCount = counts.soft_decline + counts.hard_decline;
   elements.incidentDetail.innerHTML = `
     <header class="detail-header">
       <div class="detail-meta">
@@ -419,11 +439,12 @@ function renderDetail() {
           <p>${snapshot.available ? `${snapshot.window_seconds}s window` : "Metrics unavailable"} · ${escapeHtml(incident.evidence.source)}</p>
         </div>
         <dl class="metric-table">
+          ${metric("Total attempts", formatNumber(snapshot.total_requests), false)}
           ${metric("p95 latency", `${Math.round(snapshot.p95_latency_ms)} ms`, snapshot.p95_latency_ms >= 800)}
-          ${metric("Error rate", formatRatio(snapshot.error_rate), snapshot.error_rate >= 0.05)}
-          ${metric("Timeout rate", formatRatio(snapshot.timeout_rate), snapshot.timeout_rate >= 0.03)}
-          ${metric("Decline rate", formatRatio(Math.max(0, 1 - snapshot.success_rate - snapshot.error_rate - snapshot.timeout_rate)), (1 - snapshot.success_rate - snapshot.error_rate - snapshot.timeout_rate) >= 0.1)}
-          ${metric("Success rate", formatRatio(snapshot.success_rate), false)}
+          ${metric("Provider errors", countWithShare(counts.provider_error, snapshot.total_requests), snapshot.error_rate >= 0.05)}
+          ${metric("Timeouts", countWithShare(counts.timeout, snapshot.total_requests), snapshot.timeout_rate >= 0.03)}
+          ${metric("Declines", countWithShare(declineCount, snapshot.total_requests), declineShare(snapshot) >= 0.1)}
+          ${metric("Successful", countWithShare(counts.success, snapshot.total_requests), false)}
           ${metric("Health", snapshot.health_up ? "Up" : "Down", !snapshot.health_up)}
         </dl>
         <ul class="signal-list" aria-label="Detected signals">
@@ -433,7 +454,7 @@ function renderDetail() {
             )
             .join("")}
         </ul>
-        ${renderProviderEvents(incident.evidence.provider_events)}
+        ${renderProviderEvents(incident.evidence.provider_events, analysis.response_code_insights)}
       </section>
 
       <section class="detail-section" aria-labelledby="analysis-title">
@@ -441,7 +462,8 @@ function renderDetail() {
           <h3 id="analysis-title">Investigation analysis</h3>
           <p>${Math.round(analysis.confidence * 100)}% confidence · ${escapeHtml(labels[analysis.classification])} · advisory only</p>
         </div>
-        <p class="analysis-summary">${escapeHtml(analysis.summary)}</p>
+        ${renderConclusion(analysis.conclusion)}
+        ${analysis.summary === analysis.conclusion?.statement ? "" : `<p class="analysis-summary">${escapeHtml(analysis.summary)}</p>`}
         <p class="analysis-impact"><strong>Potential impact</strong>${escapeHtml(analysis.impact)}</p>
         <div class="analysis-columns">
           <div>
@@ -509,24 +531,92 @@ function evidenceLabel(ref) {
   return `<span title="${escapeHtml(ref)}">${escapeHtml(kindLabel)}: ${escapeHtml(label.replaceAll("_", " "))}</span>`;
 }
 
-function renderProviderEvents(events = []) {
+function normalizedOutcomeCounts(snapshot) {
+  if (snapshot.outcome_counts) return snapshot.outcome_counts;
+  const total = snapshot.total_requests || 0;
+  return {
+    success: Math.round(total * snapshot.success_rate),
+    soft_decline: Math.round(total * declineShare(snapshot)),
+    hard_decline: 0,
+    provider_error: Math.round(total * snapshot.error_rate),
+    timeout: Math.round(total * snapshot.timeout_rate),
+  };
+}
+
+function declineShare(snapshot) {
+  return Math.max(0, 1 - snapshot.success_rate - snapshot.error_rate - snapshot.timeout_rate);
+}
+
+function countWithShare(count, total) {
+  return `${formatNumber(count)} · ${total ? formatRatio(count / total) : "N/A"}`;
+}
+
+function renderConclusion(conclusion) {
+  if (!conclusion) {
+    return `<div class="conclusion-card conclusion-unavailable"><div class="conclusion-heading"><h4>Incident conclusion</h4><span>Historical record</span></div><p>No verified conclusion was stored for this earlier incident.</p></div>`;
+  }
+  const verificationLabel = {
+    verified: "Internally verified",
+    estimated: "Estimated from rates",
+    unavailable: "Metrics unavailable",
+  }[conclusion.verification] || conclusion.verification;
+  const methodRows = (conclusion.payment_methods || []).map((item) => `
+    <li>
+      <span>${escapeHtml(item.payment_method)}</span>
+      <strong>${escapeHtml(formatNumber(item.affected_requests))} / ${escapeHtml(formatNumber(item.total_requests))}</strong>
+      <span>${escapeHtml(formatRatio(item.affected_share))}</span>
+    </li>`).join("");
+  return `
+    <div class="conclusion-card" data-verification="${escapeHtml(conclusion.verification)}">
+      <div class="conclusion-heading">
+        <h4>Incident conclusion</h4>
+        <span>${escapeHtml(verificationLabel)}</span>
+      </div>
+      <p>${escapeHtml(conclusion.statement)}</p>
+      <dl class="conclusion-facts">
+        <div><dt>Error window</dt><dd>${escapeHtml(formatWindow(conclusion.window_started_at, conclusion.window_ended_at))}<small>${escapeHtml(conclusion.window_seconds)} seconds</small></dd></div>
+        <div><dt>Affected / all traffic</dt><dd>${escapeHtml(formatNumber(conclusion.affected_requests))} / ${escapeHtml(formatNumber(conclusion.total_requests))}<small>${escapeHtml(formatRatio(conclusion.affected_share))}</small></dd></div>
+        <div><dt>Included outcomes</dt><dd>${escapeHtml((conclusion.affected_outcomes || []).join(", ") || "No failing outcome selected")}</dd></div>
+      </dl>
+      ${methodRows ? `<div class="method-impact"><h5>Affected share by payment method</h5><ul>${methodRows}</ul></div>` : `<p class="method-empty">Payment-method quantities were not available for this stored evidence window.</p>`}
+      <div class="evidence-refs conclusion-refs">${(conclusion.evidence_refs || []).map(evidenceLabel).join("")}</div>
+    </div>`;
+}
+
+function renderProviderEvents(events = [], insights = []) {
   if (!events.length) {
     return `<p class="event-empty">No normalized provider responses were available for this evidence window.</p>`;
   }
+  const grouped = new Map();
+  events.forEach((event) => {
+    const group = grouped.get(event.response_code) || [];
+    group.push(event);
+    grouped.set(event.response_code, group);
+  });
+  const insightByCode = new Map((insights || []).map((item) => [item.response_code, item]));
   return `
     <div class="provider-events">
-      <h4>Recent provider responses</h4>
+      <div class="provider-events-heading">
+        <h4>Response-code evidence</h4>
+        <span>${events.length} recent normalized sample${events.length === 1 ? "" : "s"} · not full traffic</span>
+      </div>
       <div class="event-table-wrap">
         <table>
-          <thead><tr><th>Code</th><th>Outcome</th><th>HTTP</th><th>Latency</th><th>Method</th></tr></thead>
-          <tbody>${events.slice(0, 8).map((event) => `
-            <tr>
-              <td><code>${escapeHtml(event.response_code)}</code></td>
-              <td>${escapeHtml(event.outcome)}</td>
-              <td>${escapeHtml(event.http_status ?? "—")}</td>
-              <td>${escapeHtml(event.processing_time_ms)} ms</td>
-              <td>${escapeHtml(event.payment_method || "—")}</td>
-            </tr>`).join("")}</tbody>
+          <thead><tr><th>Code and meaning</th><th>Description</th><th>Data used</th><th>Source</th></tr></thead>
+          <tbody>${Array.from(grouped.entries()).sort(([left], [right]) => left.localeCompare(right)).map(([code, samples]) => {
+            const insight = insightByCode.get(code);
+            const outcomes = [...new Set(samples.map((item) => item.outcome))].join(", ");
+            const methods = [...new Set(samples.map((item) => item.payment_method).filter(Boolean))].join(", ") || "not recorded";
+            const httpStatuses = [...new Set(samples.map((item) => item.http_status).filter((value) => value !== null && value !== undefined))].join(", ") || "no HTTP status";
+            const latencies = samples.map((item) => item.processing_time_ms);
+            const latencyRange = `${Math.min(...latencies)}–${Math.max(...latencies)} ms`;
+            return `<tr>
+              <td><code>${escapeHtml(code)}</code><strong>${escapeHtml(insight?.name || "Explanation unavailable")}</strong></td>
+              <td>${escapeHtml(insight?.description || "No reviewed catalog definition or validated AI explanation was stored.")}</td>
+              <td><strong>${samples.length} / ${events.length} samples</strong><span>${escapeHtml(outcomes)} · ${escapeHtml(methods)} · HTTP ${escapeHtml(httpStatuses)} · ${escapeHtml(latencyRange)}</span></td>
+              <td><span class="insight-source" data-source="${escapeHtml(insight?.source || "unavailable")}">${escapeHtml(insight?.source === "catalog" ? "Internal catalog" : insight?.source === "openai" ? "OpenAI hypothesis" : "Unavailable")}</span></td>
+            </tr>`;
+          }).join("")}</tbody>
         </table>
       </div>
     </div>`;

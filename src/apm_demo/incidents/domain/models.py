@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
+from math import isclose
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
@@ -34,6 +35,12 @@ class SignalType(StrEnum):
 
 
 class AnalysisProvider(StrEnum):
+    CATALOG = "catalog"
+    OPENAI = "openai"
+    UNAVAILABLE = "unavailable"
+
+
+class ResponseInsightSource(StrEnum):
     CATALOG = "catalog"
     OPENAI = "openai"
     UNAVAILABLE = "unavailable"
@@ -179,6 +186,8 @@ class KnownErrorRule(BaseModel):
     version: int = Field(default=1, ge=1)
     provider: ProviderId
     response_code: str = Field(min_length=1, max_length=48, pattern=r"^[A-Za-z0-9_.-]+$")
+    response_name: str | None = Field(default=None, min_length=1, max_length=120)
+    response_description: str | None = Field(default=None, min_length=1, max_length=600)
     outcome: PaymentOutcome | None = None
     payment_method: PaymentMethod | None = None
     region: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
@@ -237,6 +246,10 @@ class MetricSnapshot(BaseModel):
     window_seconds: int = Field(ge=15, le=3_600)
     observed_at: datetime = Field(default_factory=utc_now)
     total_requests: int = Field(ge=0)
+    outcome_counts: "OutcomeCounts | None" = None
+    payment_method_breakdown: tuple["PaymentMethodBreakdown", ...] = Field(
+        default=(), max_length=16
+    )
     request_rate_per_second: float = Field(ge=0)
     success_rate: float = Field(ge=0, le=1)
     error_rate: float = Field(ge=0, le=1)
@@ -256,7 +269,67 @@ class MetricSnapshot(BaseModel):
             raise ValueError("available metrics cannot contain collection_error")
         if not self.available and not self.collection_error:
             raise ValueError("unavailable metrics require collection_error")
+        if self.payment_method_breakdown and self.outcome_counts is None:
+            raise ValueError("payment method counts require provider outcome counts")
+        if self.outcome_counts is not None:
+            if self.outcome_counts.total_requests != self.total_requests:
+                raise ValueError("outcome counts must equal total_requests")
+            if self.payment_method_breakdown:
+                combined = OutcomeCounts(
+                    success=sum(item.counts.success for item in self.payment_method_breakdown),
+                    soft_decline=sum(
+                        item.counts.soft_decline for item in self.payment_method_breakdown
+                    ),
+                    hard_decline=sum(
+                        item.counts.hard_decline for item in self.payment_method_breakdown
+                    ),
+                    provider_error=sum(
+                        item.counts.provider_error for item in self.payment_method_breakdown
+                    ),
+                    timeout=sum(item.counts.timeout for item in self.payment_method_breakdown),
+                )
+                if combined != self.outcome_counts:
+                    raise ValueError(
+                        "payment method counts must equal provider outcome counts"
+                    )
         return self
+
+
+class OutcomeCounts(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    success: int = Field(default=0, ge=0)
+    soft_decline: int = Field(default=0, ge=0)
+    hard_decline: int = Field(default=0, ge=0)
+    provider_error: int = Field(default=0, ge=0)
+    timeout: int = Field(default=0, ge=0)
+
+    @property
+    def total_requests(self) -> int:
+        return (
+            self.success
+            + self.soft_decline
+            + self.hard_decline
+            + self.provider_error
+            + self.timeout
+        )
+
+    def count_for(self, outcomes: tuple[PaymentOutcome, ...]) -> int:
+        values = {
+            PaymentOutcome.SUCCESS: self.success,
+            PaymentOutcome.SOFT_DECLINE: self.soft_decline,
+            PaymentOutcome.HARD_DECLINE: self.hard_decline,
+            PaymentOutcome.PROVIDER_ERROR: self.provider_error,
+            PaymentOutcome.TIMEOUT: self.timeout,
+        }
+        return sum(values[outcome] for outcome in outcomes)
+
+
+class PaymentMethodBreakdown(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    payment_method: PaymentMethod
+    counts: OutcomeCounts
 
 
 class AlertSignal(BaseModel):
@@ -293,6 +366,86 @@ class RemediationAction(BaseModel):
     safe_to_automate: bool = False
 
 
+class PaymentMethodImpact(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    payment_method: PaymentMethod
+    affected_requests: int = Field(ge=0)
+    total_requests: int = Field(ge=0)
+    affected_share: float | None = Field(default=None, ge=0, le=1)
+
+
+class IncidentConclusion(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    statement: str = Field(min_length=1, max_length=800)
+    window_started_at: datetime
+    window_ended_at: datetime
+    window_seconds: int = Field(ge=15, le=3_600)
+    affected_outcomes: tuple[PaymentOutcome, ...] = Field(max_length=5)
+    affected_requests: int = Field(ge=0)
+    total_requests: int = Field(ge=0)
+    affected_share: float | None = Field(default=None, ge=0, le=1)
+    payment_methods: tuple[PaymentMethodImpact, ...] = Field(default=(), max_length=16)
+    evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=24)
+    verification: Literal["verified", "estimated", "unavailable"]
+
+    @model_validator(mode="after")
+    def validate_computed_facts(self) -> "IncidentConclusion":
+        if self.window_started_at.tzinfo is None or self.window_ended_at.tzinfo is None:
+            raise ValueError("conclusion window timestamps must be timezone-aware")
+        if self.window_ended_at < self.window_started_at:
+            raise ValueError("conclusion window cannot end before it starts")
+        elapsed = (self.window_ended_at - self.window_started_at).total_seconds()
+        if not isclose(elapsed, self.window_seconds, abs_tol=0.001):
+            raise ValueError("conclusion window must match window_seconds")
+        if self.affected_requests > self.total_requests:
+            raise ValueError("affected requests cannot exceed total requests")
+        expected_share = (
+            self.affected_requests / self.total_requests
+            if self.total_requests
+            else None
+        )
+        if expected_share is None and self.affected_share is not None:
+            raise ValueError("affected share is unavailable when total requests is zero")
+        if expected_share is not None and (
+            self.affected_share is None
+            or not isclose(self.affected_share, expected_share, abs_tol=1e-9)
+        ):
+            raise ValueError("affected share must match affected and total requests")
+        for method in self.payment_methods:
+            if method.affected_requests > method.total_requests:
+                raise ValueError("payment-method affected requests cannot exceed total")
+            expected_method_share = (
+                method.affected_requests / method.total_requests
+                if method.total_requests
+                else None
+            )
+            if expected_method_share is None and method.affected_share is not None:
+                raise ValueError(
+                    "payment-method share is unavailable when total requests is zero"
+                )
+            if expected_method_share is not None and (
+                method.affected_share is None
+                or not isclose(
+                    method.affected_share, expected_method_share, abs_tol=1e-9
+                )
+            ):
+                raise ValueError("payment-method share must match its request counts")
+        return self
+
+
+class ResponseCodeInsight(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    response_code: str = Field(min_length=1, max_length=48, pattern=r"^[A-Za-z0-9_.-]+$")
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=600)
+    source: ResponseInsightSource
+    evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=24)
+    catalog_rule_id: str | None = Field(default=None, max_length=80)
+
+
 class IncidentAnalysis(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -303,6 +456,10 @@ class IncidentAnalysis(BaseModel):
     # Empty is accepted only when loading historical stored records. New analyzers
     # and deterministic classifications always provide causal hypotheses.
     causes: tuple["CauseHypothesis", ...] = Field(default=(), max_length=5)
+    conclusion: IncidentConclusion | None = None
+    response_code_insights: tuple[ResponseCodeInsight, ...] = Field(
+        default=(), max_length=24
+    )
     recommended_actions: tuple[RemediationAction, ...] = Field(
         min_length=1, max_length=5
     )

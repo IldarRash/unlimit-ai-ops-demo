@@ -203,6 +203,11 @@ def _default_known_error_rule() -> KnownErrorRule:
         rule_id="atlas-upstream-error",
         provider=ProviderId.ATLAS_PAY,
         response_code="UPSTREAM_ERROR",
+        response_name="Upstream processing error",
+        response_description=(
+            "AtlasPay could not complete processing because its upstream payment "
+            "system returned a provider-side failure."
+        ),
         outcome=PaymentOutcome.PROVIDER_ERROR,
         headline="AtlasPay upstream processing error",
         summary=(

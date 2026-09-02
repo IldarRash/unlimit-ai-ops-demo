@@ -15,7 +15,6 @@ from apm_demo.incidents.infrastructure.metrics import (
 @pytest.mark.asyncio
 async def test_prometheus_source_normalizes_provider_metrics() -> None:
     values = {
-        "increase(": "120",
         "histogram_quantile": "1650",
         "provider_health": "1",
         'outcome="success"': "0.80",
@@ -26,6 +25,53 @@ async def test_prometheus_source_normalizes_provider_metrics() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         query = parse_qs(request.url.query.decode())["query"][0]
+        if "sum by (payment_method, outcome)" in query:
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": {
+                        "resultType": "vector",
+                        "result": [
+                            {
+                                "metric": {
+                                    "payment_method": "pix",
+                                    "outcome": "success",
+                                },
+                                "value": [1, "72"],
+                            },
+                            {
+                                "metric": {
+                                    "payment_method": "pix",
+                                    "outcome": "provider-error",
+                                },
+                                "value": [1, "18"],
+                            },
+                            {
+                                "metric": {
+                                    "payment_method": "pix",
+                                    "outcome": "transport-error",
+                                },
+                                "value": [1, "2"],
+                            },
+                            {
+                                "metric": {
+                                    "payment_method": "ideal",
+                                    "outcome": "success",
+                                },
+                                "value": [1, "24"],
+                            },
+                            {
+                                "metric": {
+                                    "payment_method": "ideal",
+                                    "outcome": "timeout",
+                                },
+                                "value": [1, "6"],
+                            },
+                        ],
+                    },
+                },
+            )
         value = next(value for marker, value in values.items() if marker in query)
         return httpx.Response(
             200,
@@ -42,7 +88,12 @@ async def test_prometheus_source_normalizes_provider_metrics() -> None:
 
     snapshot = await source.collect(ProviderId.ATLAS_PAY, window_seconds=300)
 
-    assert snapshot.total_requests == 120
+    assert snapshot.total_requests == 122
+    assert snapshot.outcome_counts is not None
+    assert snapshot.outcome_counts.provider_error == 20
+    assert snapshot.outcome_counts.timeout == 6
+    assert snapshot.payment_method_breakdown[0].payment_method.value == "ideal"
+    assert snapshot.payment_method_breakdown[1].counts.total_requests == 92
     assert snapshot.success_rate == 0.8
     assert snapshot.p95_latency_ms == 1_650
     assert snapshot.health_up is True

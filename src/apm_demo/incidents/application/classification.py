@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from apm_demo.incidents.application.conclusion import build_conclusion
+from apm_demo.incidents.application.response_codes import (
+    builtin_response_insights,
+    catalog_response_insight,
+    unavailable_response_insights,
+)
 from apm_demo.incidents.domain import (
     AnalysisProvider,
     CauseHypothesis,
@@ -38,20 +44,24 @@ class IncidentClassifier:
 
     async def classify(self, evidence: EvidenceBundle) -> ClassificationResult:
         try:
+            matched: tuple[ProviderEvent, KnownErrorRule] | None = None
             for event in evidence.provider_events:
                 rule = await self._catalog.match(event)
-                if rule is not None:
-                    return ClassificationResult(
-                        kind=ClassificationKind.KNOWN,
-                        analysis=self._catalog_analysis(rule, event),
-                        matched_event=event,
-                        matched_rule=rule,
-                    )
+                if rule is not None and matched is None:
+                    matched = (event, rule)
+            if matched is not None:
+                event, rule = matched
+                return ClassificationResult(
+                    kind=ClassificationKind.KNOWN,
+                    analysis=self._catalog_analysis(rule, event, evidence),
+                    matched_event=event,
+                    matched_rule=rule,
+                )
         except ValueError as error:
             return ClassificationResult(
                 kind=ClassificationKind.UNAVAILABLE,
                 analysis=self._unavailable_analysis(
-                    f"Known-error catalog is ambiguous: {error}"
+                    f"Known-error catalog is ambiguous: {error}", evidence
                 ),
             )
 
@@ -61,7 +71,8 @@ class IncidentClassifier:
             return ClassificationResult(
                 kind=ClassificationKind.UNAVAILABLE,
                 analysis=self._unavailable_analysis(
-                    "Automated analysis is temporarily unavailable. Inspect evidence and runbook manually."
+                    "Automated analysis is temporarily unavailable. Inspect evidence and runbook manually.",
+                    evidence,
                 ),
             )
         return ClassificationResult(
@@ -73,8 +84,16 @@ class IncidentClassifier:
 
     @staticmethod
     def _catalog_analysis(
-        rule: KnownErrorRule, event: ProviderEvent
+        rule: KnownErrorRule, event: ProviderEvent, evidence: EvidenceBundle
     ) -> IncidentAnalysis:
+        response_insights = {
+            insight.response_code: insight
+            for insight in builtin_response_insights(evidence.provider_events)
+        }
+        response_insights[rule.response_code] = catalog_response_insight(
+            rule, evidence.provider_events
+        )
+        evidence_refs = ("snapshot", f"event:{event.event_id}")
         return IncidentAnalysis(
             headline=rule.headline,
             summary=rule.summary,
@@ -88,6 +107,14 @@ class IncidentClassifier:
                     evidence_refs=(f"event:{event.event_id}",),
                 ),
             ),
+            conclusion=build_conclusion(
+                evidence,
+                statement=rule.summary,
+                evidence_refs=evidence_refs,
+            ),
+            response_code_insights=tuple(
+                response_insights[code] for code in sorted(response_insights)
+            ),
             recommended_actions=rule.recommended_actions,
             confidence=rule.confidence,
             generated_by=AnalysisProvider.CATALOG,
@@ -98,7 +125,9 @@ class IncidentClassifier:
         )
 
     @staticmethod
-    def _unavailable_analysis(reason: str) -> IncidentAnalysis:
+    def _unavailable_analysis(
+        reason: str, evidence: EvidenceBundle
+    ) -> IncidentAnalysis:
         return IncidentAnalysis(
             headline="Incident analysis unavailable",
             summary=reason,
@@ -111,6 +140,14 @@ class IncidentClassifier:
                     why=reason,
                     evidence_refs=("snapshot",),
                 ),
+            ),
+            conclusion=build_conclusion(
+                evidence,
+                statement=reason,
+                evidence_refs=("snapshot",),
+            ),
+            response_code_insights=unavailable_response_insights(
+                evidence.provider_events
             ),
             recommended_actions=(
                 RemediationAction(

@@ -14,13 +14,16 @@ Sentinel is a working Technical Operations demo for investigating degradation ac
 - A catalog-first incident classifier:
   - a known AtlasPay `UPSTREAM_ERROR` is answered deterministically from a versioned catalog without an LLM call;
   - unknown technical errors and business anomalies are sent to OpenAI with normalized metrics and bounded provider events.
-- OpenAI Responses API integration with strict JSON Schema, `store: false`, bounded retries, a circuit breaker, and validation that every cause refers only to supplied evidence.
+- Quantitative incident evidence from Prometheus: exact outcome counts for the analysis window, affected attempts out of all provider traffic, and affected count/share for each payment method.
+- Response-code intelligence with explicit provenance: common and reviewed provider codes use the internal catalog; every uncatalogued code must receive exactly one bounded OpenAI explanation tied to sampled provider events.
+- OpenAI Responses API integration with strict JSON Schema, `store: false`, bounded retries, a circuit breaker, and validation that causes, code explanations, and the narrative conclusion refer only to supplied evidence.
+- A separate incident conclusion combines the model or catalog narrative with backend-computed time window, counts, shares, and an internal consistency check. The model is never trusted to calculate those numbers.
 - Structured causes that separate `business` from `technical` hypotheses and show: possible cause → why it is plausible → source metric/event.
 - Human-controlled incident lifecycle, advisory-only remediation, feedback capture, full audit trail, correlation, replay protection, and deduplication.
 - PostgreSQL persistence for the complete Compose/Railway runtime and SQLite as an explicit local/test fallback.
 - Same-origin operator API: the browser never needs direct access to private provider or traffic-generator services.
 - Authenticated external operational signals for provider status, support tickets, Slack/email escalations, merchant complaints, and operations reports. Only normalized, explicitly non-customer data enters the evidence bundle.
-- 71 automated tests covering domain contracts, OpenAI request/response validation with local fakes, the network-request gate, catalog bypass, external-signal ingestion, orchestration, API access control, demo controls, observability assets, and persistence selection.
+- 76 automated tests covering domain contracts, quantitative evidence validation, OpenAI request/response validation with local fakes, the network-request gate, catalog bypass, external-signal ingestion, orchestration, API access control, demo controls, observability assets, and persistence selection.
 
 No production mock analyzer remains. Runtime configuration requires an `OPENAI_API_KEY`. A separate `APM_INCIDENT_OPENAI_REQUESTS_ENABLED` gate defaults to `false`, so a key can be configured without accidental external requests during local verification. Automated tests inject local fake analyzers and never call the external API.
 
@@ -51,7 +54,7 @@ weighted healthy traffic ──> synthetic providers ──> client/provider met
                                            operator console + live stream
 ```
 
-The deterministic boundary is deliberate. Thresholds, alert routing, known response codes, deduplication, and lifecycle transitions are rules. OpenAI is used only when the normalized evidence does not match a reviewed catalog entry. The model proposes a structured explanation and reversible investigation steps; it cannot change routing, retry payments, or resolve an incident.
+The deterministic boundary is deliberate. Thresholds, alert routing, known response codes, numeric traffic impact, deduplication, and lifecycle transitions are rules. OpenAI is used only when the normalized evidence does not match a reviewed catalog entry. Prompt `incident-v5` asks the model for structured causes, a bounded conclusion statement, uncatalogued-code explanations, and reversible investigation steps. The backend validates references and code coverage, then attaches its own verified counts and shares; the model cannot change routing, retry payments, or resolve an incident.
 
 The incident bounded context is under `src/apm_demo/incidents`:
 
@@ -203,6 +206,15 @@ N0 Working prototype [done]
                     │
           N1 + N2 + N5 ──> N6 Railway deployment and public-access verification
                               [configuration preparation local; public/secret changes require approval]
+
+N5 ──> N8 Prometheus outcome and payment-method counts [done]
+        ├──> N9 Catalog/LLM response-code explanations [done]
+        ├──> N10 Internally verified incident conclusion [done]
+        └──> N11 Grafana failure panels use counts [done]
+              N9 + N10 + N11 ──> N12 Compact quantitative incident UI [done]
+                                     └──> N13 Full regression suite [done: 76/76]
+                                            └──> N14 Local visual and paid prompt-v5 smoke
+                                                   [visual verification done; paid request requires approval]
 ```
 
 Completion evidence for each node:
@@ -213,6 +225,13 @@ Completion evidence for each node:
 - `N4`: complete. An approved `gpt-5.4-mini` Responses request returned strict `incident-v4` output, request metadata, 3,464 input tokens, and 807 output tokens; the evidence artifact stores presence flags rather than credentials or request IDs.
 - `N5`: complete. Alertmanager opened the unknown OrbitWallet incident from Prometheus metrics, 20 normalized provider events, and one external signal; OpenAI produced two grounded causes and four advisory actions, the UI was visually verified, and the incident automatically resolved after recovery.
 - `N6`: healthy Railway services, protected public URLs, PostgreSQL persistence, and rollback evidence.
+- `N8`: complete. The evidence snapshot stores provider totals and a bounded `payment_method × outcome` breakdown from Prometheus; transport failures are normalized into technical provider-error counts.
+- `N9`: complete in code. Built-in and versioned catalog definitions are authoritative; strict output requires one explanation for each unknown code and rejects missing, extra, duplicate, or ungrounded entries.
+- `N10`: complete in code. Narrative conclusions carry evidence references while the backend calculates and validates the exact window, affected count, total count, share, and per-method impact.
+- `N11`: complete in code. Business-decline and technical-failure panels now use integer `increase(...)` transaction counts; throughput panels intentionally remain in requests per second.
+- `N12`: complete in code. The console presents quantities before rates, a verified conclusion card, per-method impact, and grouped response-code evidence with description, sample facts, and provenance.
+- `N13`: complete. The full suite passes 76/76, including strict unknown-code coverage, internal numeric consistency, transport-error aggregation, Grafana count queries, and UI provenance labels.
+- `N14`: the rebuilt Compose stack and browser UI are verified. A known AtlasPay incident displayed exact counts, a 300-second interval, per-method impact, catalog descriptions, and provenance; Grafana displayed integer decline/failure counts while throughput remained RPS. One live `incident-v5` unknown-code request remains and will run only with explicit paid-request approval.
 
 ### Evaluation and submission artifacts
 
@@ -231,4 +250,4 @@ Only Grafana, Prometheus, and the Incident API/UI should receive public domains.
 
 ## Verification boundary
 
-The repository has 71 passing automated tests. The post-change Compose build, healthy baseline, UI controls, nine-panel incident dashboard, Prometheus targets, external-signal ingestion, PostgreSQL migration, known catalog bypass, and unknown OpenAI incident/recovery flow have been verified locally. The live run completed in about 57.4 seconds from scenario start to stored analysis, used 3,464 input and 807 output tokens, displayed grounded causes in the operator UI, and resolved automatically after recovery. Railway secret upload, public domains, and deployment verification remain protected `N6` actions.
+The repository has 76 passing automated tests. The rebuilt Compose stack, healthy baseline traffic, UI controls, quantitative incident view, Grafana count panels, Prometheus targets, PostgreSQL persistence, and known catalog bypass are verified locally. The earlier `incident-v4` live run completed in about 57.4 seconds, used 3,464 input and 807 output tokens, displayed grounded causes, and resolved after recovery. One approved paid `incident-v5` smoke remains in `N14`; Railway secret upload, public domains, and deployment verification remain protected `N6` actions.
