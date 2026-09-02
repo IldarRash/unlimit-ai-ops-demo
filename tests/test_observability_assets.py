@@ -194,7 +194,9 @@ def test_incident_console_exposes_verified_counts_and_response_provenance() -> N
     assert "recent provider event" in app
     assert "Investigation hypothesis" in app
     assert "Action required" in app
-    assert "Monitor only" in app
+    assert "Monitoring required" in app
+    assert "Investigation details" in app
+    assert 'class="response-error"' in app
     assert "OpenAI assessment" not in app
     assert "Automated analysis" not in app
     assert "not full traffic" in app

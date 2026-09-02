@@ -438,8 +438,6 @@ function renderDetail() {
           <h3 id="analysis-title">Incident analysis</h3>
           <p>${Math.round(analysis.confidence * 100)}% confidence · ${escapeHtml(labels[analysis.classification])} · advisory only</p>
         </div>
-        ${renderOperatorDecision(analysis)}
-        ${renderConclusion(analysis.conclusion)}
         <dl class="metric-table metric-table-compact" aria-label="Measured evidence summary">
           ${metric("Attempts", formatNumber(snapshot.total_requests), false)}
           ${metric("Provider errors", countWithShare(counts.provider_error, snapshot.total_requests), snapshot.error_rate >= 0.05)}
@@ -448,25 +446,9 @@ function renderDetail() {
           ${metric("p95", `${Math.round(snapshot.p95_latency_ms)} ms`, snapshot.p95_latency_ms >= 800)}
           ${metric("Health", snapshot.health_up ? "Up" : "Down", !snapshot.health_up)}
         </dl>
-        ${analysis.summary === analysis.conclusion?.statement ? "" : `<p class="analysis-summary">${escapeHtml(analysis.summary)}</p>`}
-        <p class="analysis-impact"><strong>Potential impact</strong>${escapeHtml(analysis.impact)}</p>
-        <div class="analysis-columns">
-          <div>
-            <h4>Likely causes</h4>
-            ${renderCauses(analysis)}
-          </div>
-          <div>
-            <h4>Recommended operator checks</h4>
-            <ol class="recommendation-list">
-              ${analysis.recommended_actions
-                .sort((a, b) => a.priority - b.priority)
-                .map(
-                  (action) => `<li><strong>${escapeHtml(action.title)}</strong><span>${escapeHtml(action.rationale)}</span></li>`
-                )
-                .join("")}
-            </ol>
-          </div>
-        </div>
+        ${renderConclusion(analysis)}
+        ${renderActionRequired(analysis)}
+        ${renderInvestigationDetails(analysis)}
         ${analysis.runbook_url ? `<a class="runbook-link" href="${escapeHtml(analysis.runbook_url)}" target="_blank" rel="noreferrer">Open operator guide <span aria-hidden="true">↗</span></a>` : ""}
       </section>
 
@@ -512,6 +494,29 @@ function renderDetail() {
     </div>`;
 }
 
+function renderInvestigationDetails(analysis) {
+  const causes = analysis.causes
+    || analysis.cause_hypotheses
+    || analysis.probable_causes
+    || [];
+  const causeCount = causes.length;
+  return `
+    <details class="detail-disclosure investigation-disclosure">
+      <summary>Investigation details <span>${causeCount} likely cause${causeCount === 1 ? "" : "s"} · impact and reasoning</span></summary>
+      <div class="disclosure-content investigation-content">
+        <section class="analysis-context" aria-labelledby="context-title">
+          <h4 id="context-title">Finding and impact</h4>
+          <p>${escapeHtml(normalizeLegacyNarrative(analysis.summary))}</p>
+          <p><strong>Potential impact:</strong> ${escapeHtml(normalizeLegacyNarrative(analysis.impact))}</p>
+        </section>
+        <section aria-labelledby="causes-title">
+          <h4 id="causes-title">Likely causes</h4>
+          ${renderCauses(analysis)}
+        </section>
+      </div>
+    </details>`;
+}
+
 function renderCauses(analysis) {
   const structuredCauses = analysis.causes || analysis.cause_hypotheses;
   const causes = Array.isArray(structuredCauses) && structuredCauses.length
@@ -527,18 +532,64 @@ function renderCauses(analysis) {
     </li>`).join("")}</ul>`;
 }
 
-function renderOperatorDecision(analysis) {
-  const disposition = analysis.operator_disposition || "manual-review";
+function renderActionRequired(analysis) {
+  const disposition = analysis.classification === "known"
+    ? "action-required"
+    : analysis.operator_disposition || "manual-review";
   const dispositionLabels = {
     "action-required": "Action required",
-    "monitor-only": "Monitor only",
+    "monitor-only": "Monitoring required",
     "manual-review": "Manual review",
   };
+  const actions = [...(analysis.recommended_actions || [])].sort((a, b) => a.priority - b.priority);
   return `
-    <div class="operator-decision" data-disposition="${escapeHtml(disposition)}">
-      <strong>${escapeHtml(dispositionLabels[disposition] || "Manual review")}</strong>
-      <p>${escapeHtml(analysis.operator_decision || "Review the available evidence before taking action.")}</p>
-    </div>`;
+    <section class="action-required" data-disposition="${escapeHtml(disposition)}" aria-labelledby="action-required-title">
+      <div class="action-required-heading">
+        <h4 id="action-required-title">${escapeHtml(dispositionLabels[disposition] || "Manual review")}</h4>
+        <span>${actions.length} operator step${actions.length === 1 ? "" : "s"}</span>
+      </div>
+      <p>${escapeHtml(normalizeLegacyNarrative(
+        analysis.operator_decision
+          || "Review the available evidence before taking action."
+      ))}</p>
+      ${actions.length ? `<ol class="recommendation-list">
+        ${actions.map(renderRecommendedAction).join("")}
+      </ol>` : ""}
+    </section>`;
+}
+
+function renderRecommendedAction(action) {
+  return `<li>
+    <strong>${escapeHtml(normalizeLegacyNarrative(action.title))}</strong>
+    <span>${escapeHtml(normalizeLegacyNarrative(action.rationale))}</span>
+  </li>`;
+}
+
+function normalizeLegacyNarrative(value) {
+  return String(value || "")
+    .replace(/\bprovider incident runbook\b/gi, "provider incident guide")
+    .replace(/\brunbook\b/gi, "operator guide")
+    .replace(/\bno\s+\w+\s+analysis is required\b/gi, "no additional assessment is required")
+    .replace(
+      /\b\w+\s+analysis is temporarily unavailable\.?/gi,
+      "The cause is not yet classified."
+    );
+}
+
+function conciseConclusion(analysis) {
+  if (analysis.classification === "known") {
+    return `${analysis.headline}. ${normalizeLegacyNarrative(analysis.impact)}`;
+  }
+  if (analysis.classification === "unavailable") {
+    return `The cause is not yet classified. ${normalizeLegacyNarrative(analysis.impact)}`;
+  }
+  const source = normalizeLegacyNarrative(
+    analysis.conclusion?.statement || analysis.summary
+  );
+  const sentences = source.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [source];
+  const shortText = sentences.slice(0, 2).join(" ").trim();
+  if (shortText.length <= 320) return shortText;
+  return `${shortText.slice(0, 317).replace(/\s+\S*$/, "")}…`;
 }
 
 function evidenceLabel(ref) {
@@ -568,9 +619,10 @@ function countWithShare(count, total) {
   return `${formatNumber(count)} · ${total ? formatRatio(count / total) : "N/A"}`;
 }
 
-function renderConclusion(conclusion) {
+function renderConclusion(analysis) {
+  const conclusion = analysis.conclusion;
   if (!conclusion) {
-    return `<div class="conclusion-card conclusion-unavailable"><div class="conclusion-heading"><h4>Incident conclusion</h4><span>Historical record</span></div><p>No verified conclusion was stored for this earlier incident.</p></div>`;
+    return `<div class="conclusion-card conclusion-unavailable"><div class="conclusion-heading"><h4>Incident conclusion</h4><span>Historical record</span></div><p>${escapeHtml(conciseConclusion(analysis))}</p></div>`;
   }
   const verificationLabel = {
     verified: "Internally verified",
@@ -589,7 +641,7 @@ function renderConclusion(conclusion) {
         <h4>Incident conclusion</h4>
         <span>${escapeHtml(verificationLabel)}</span>
       </div>
-      <p>${escapeHtml(conclusion.statement)}</p>
+      <p>${escapeHtml(conciseConclusion(analysis))}</p>
       <dl class="conclusion-facts">
         <div><dt>Error window</dt><dd>${escapeHtml(formatWindow(conclusion.window_started_at, conclusion.window_ended_at))}<small>${escapeHtml(conclusion.window_seconds)} seconds</small></dd></div>
         <div><dt>Affected / all traffic</dt><dd>${escapeHtml(formatNumber(conclusion.affected_requests))} / ${escapeHtml(formatNumber(conclusion.total_requests))}<small>${escapeHtml(formatRatio(conclusion.affected_share))}</small></dd></div>
@@ -617,26 +669,62 @@ function renderProviderEvents(events = [], insights = []) {
         <h4>Response-code evidence</h4>
         <span>${events.length} recent provider event${events.length === 1 ? "" : "s"} · not full traffic</span>
       </div>
-      <div class="event-table-wrap">
-        <table>
-          <thead><tr><th>Code and meaning</th><th>Description</th><th>Data used</th><th>Source</th></tr></thead>
-          <tbody>${Array.from(grouped.entries()).sort(([left], [right]) => left.localeCompare(right)).map(([code, samples]) => {
-            const insight = insightByCode.get(code);
-            const outcomes = [...new Set(samples.map((item) => item.outcome))].join(", ");
-            const methods = [...new Set(samples.map((item) => item.payment_method).filter(Boolean))].join(", ") || "not recorded";
-            const httpStatuses = [...new Set(samples.map((item) => item.http_status).filter((value) => value !== null && value !== undefined))].join(", ") || "no HTTP status";
-            const latencies = samples.map((item) => item.processing_time_ms);
-            const latencyRange = `${Math.min(...latencies)}–${Math.max(...latencies)} ms`;
-            return `<tr>
-              <td><code>${escapeHtml(code)}</code><strong>${escapeHtml(insight?.name || "Explanation unavailable")}</strong></td>
-              <td>${escapeHtml(insight?.description || "No reviewed catalog definition or validated investigation explanation was stored.")}</td>
-              <td><strong>${samples.length} of ${events.length} recent events</strong><span>${escapeHtml(outcomes)} · ${escapeHtml(methods)} · HTTP ${escapeHtml(httpStatuses)} · ${escapeHtml(latencyRange)}</span></td>
-              <td><span class="insight-source" data-source="${escapeHtml(insight?.source || "unavailable")}">${escapeHtml(insight?.source === "catalog" ? "Database catalog" : insight?.source === "openai" ? "Investigation hypothesis" : "Unavailable")}</span></td>
-            </tr>`;
-          }).join("")}</tbody>
-        </table>
+      <div class="response-error-list">
+        ${Array.from(grouped.entries())
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([code, samples]) => renderResponseError(
+            code,
+            samples,
+            events.length,
+            insightByCode.get(code)
+          ))
+          .join("")}
       </div>
     </div>`;
+}
+
+function renderResponseError(code, samples, totalEvents, insight) {
+  const uniqueValues = (selector) => [...new Set(samples.map(selector).filter(Boolean))];
+  const outcomes = uniqueValues((item) => item.outcome).join(", ");
+  const methods = uniqueValues((item) => item.payment_method).join(", ") || "not recorded";
+  const httpStatuses = uniqueValues((item) => item.http_status).join(", ") || "no HTTP status";
+  const latencies = samples.map((item) => item.processing_time_ms);
+  const latencyRange = `${Math.min(...latencies)}–${Math.max(...latencies)} ms`;
+  const sourceLabels = {
+    catalog: "Database catalog",
+    openai: "Investigation hypothesis",
+  };
+  const source = sourceLabels[insight?.source] || "Unavailable";
+  const description = insight?.description
+    || "No reviewed catalog definition or validated investigation explanation was stored.";
+  const evidence = (insight?.evidence_refs || []).map(evidenceLabel).join("")
+    || "<span>Evidence source unavailable</span>";
+
+  return `<details class="response-error">
+    <summary>
+      <span class="response-identity">
+        <code>${escapeHtml(code)}</code>
+        <strong>${escapeHtml(insight?.name || "Explanation unavailable")}</strong>
+      </span>
+      <span class="response-count">${samples.length} of ${totalEvents} recent events</span>
+    </summary>
+    <div class="response-error-body">
+      <div class="response-description">
+        <h5>Description</h5>
+        <p>${escapeHtml(normalizeLegacyNarrative(description))}</p>
+      </div>
+      <dl class="response-facts">
+        <div><dt>Outcomes</dt><dd>${escapeHtml(outcomes)}</dd></div>
+        <div><dt>Payment methods</dt><dd>${escapeHtml(methods)}</dd></div>
+        <div><dt>HTTP status</dt><dd>${escapeHtml(httpStatuses)}</dd></div>
+        <div><dt>Latency</dt><dd>${escapeHtml(latencyRange)}</dd></div>
+      </dl>
+      <div class="response-provenance">
+        <span class="insight-source" data-source="${escapeHtml(insight?.source || "unavailable")}">${escapeHtml(source)}</span>
+        <div class="evidence-refs">${evidence}</div>
+      </div>
+    </div>
+  </details>`;
 }
 
 function metric(label, value, bad) {

@@ -36,15 +36,16 @@ Do not invent metrics, execute actions, or claim certainty beyond the evidence.
 Every evidence_refs item must exactly match one value from allowed_evidence_refs in the input.
 Use internal_response_catalog definitions as authoritative and do not redefine those response codes.
 Return exactly one response_code_explanations item for every unresolved_response_codes value and no others.
-The conclusion statement must explain the operational finding without inventing numeric quantities; verified
-counts, shares, payment-method impact, and the exact time window are calculated by the application.
+The conclusion statement must summarize the primary finding and its operational impact in no more than
+two short sentences. Do not include operator steps or invent numeric quantities; verified counts, shares,
+payment-method impact, and the exact time window are calculated by the application.
 Set operator_disposition to action-required when an operator should investigate or intervene now.
 Set it to monitor-only only for likely background noise that needs observation but no immediate action.
 Critical evidence can never be monitor-only. operator_decision must state the concrete next step or
 the exact condition that should trigger escalation, without mentioning AI, LLMs, prompts, or automation.
 Recommend reversible operator checks before mitigation. Return only the requested schema.
 """
-PROMPT_VERSION = "incident-v6"
+PROMPT_VERSION = "incident-v7"
 logger = logging.getLogger("apm_demo.incidents.analysis")
 
 
@@ -68,7 +69,7 @@ class _ProposedAction(BaseModel):
 class _ProposedConclusion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    statement: str = Field(min_length=1, max_length=800)
+    statement: str = Field(min_length=1, max_length=320)
     evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=24)
 
 

@@ -138,58 +138,21 @@ class AlertIncidentPipeline:
         if alert.status is AlertDeliveryStatus.RESOLVED:
             return await self._resolve(existing)
 
-        try:
-            snapshot = await self._metrics.collect(
-                provider, window_seconds=self._window_seconds
-            )
-            evidence_source = type(self._metrics).__name__
-        except MetricsUnavailable:
-            snapshot = MetricSnapshot(
-                provider=provider,
-                available=False,
-                collection_error="metrics-source-unavailable",
-                window_seconds=self._window_seconds,
-                total_requests=0,
-                request_rate_per_second=0,
-                success_rate=0,
-                error_rate=0,
-                timeout_rate=0,
-                p95_latency_ms=0,
-                health_up=True,
-            )
-            evidence_source = "metrics-unavailable"
-        signals = self._detector.detect(snapshot) or (self._signal_from_alert(alert),)
-        provider_events = await self._provider_events.list_recent_events(
-            provider, limit=self._event_limit
-        )
-        external_signals = await self._external_signals.list_recent_external_signals(
-            provider, limit=self._external_signal_limit
-        )
-        evidence = EvidenceBundle(
-            snapshot=snapshot,
-            signals=signals,
-            alert=AlertEvidence(
-                group_key=webhook.group_key,
-                fingerprint=alert.fingerprint,
-                alert_name=alert.labels.get("alertname", "ProviderDegradation"),
-                status=alert.status,
-                severity=alert.labels.get("severity"),
-                truncated=webhook.truncated_alerts > 0,
-            ),
-            provider_events=provider_events,
-            external_signals=external_signals,
-            source=evidence_source,
-            collected_at=self._now(),
-        )
-        severity = self._severity(alert, signals)
+        evidence = await self._collect_evidence(webhook, alert, provider)
+        severity = self._severity(alert, evidence.signals)
         if existing is None:
             existing = await self._incidents.find_active_by_fingerprint(
-                incident_fingerprint(snapshot, signals)
+                incident_fingerprint(evidence.snapshot, evidence.signals)
             )
         if existing is None:
             classification = await self._classifier.classify(evidence)
             return await self._create(
-                webhook, alert, provider, evidence, classification.analysis, severity
+                webhook,
+                alert,
+                provider,
+                evidence,
+                classification.analysis,
+                severity,
             )
         if (
             existing.status is not IncidentStatus.RESOLVED
@@ -212,6 +175,63 @@ class AlertIncidentPipeline:
             source_alert_fingerprint=alert.fingerprint,
             alert_group_key=webhook.group_key,
         )
+
+    async def _collect_evidence(
+        self,
+        webhook: AlertmanagerWebhook,
+        alert: AlertmanagerAlert,
+        provider: ProviderId,
+    ) -> EvidenceBundle:
+        snapshot, evidence_source = await self._collect_snapshot(provider)
+        signals = self._detector.detect(snapshot) or (self._signal_from_alert(alert),)
+        provider_events = await self._provider_events.list_recent_events(
+            provider, limit=self._event_limit
+        )
+        external_signals = await self._external_signals.list_recent_external_signals(
+            provider, limit=self._external_signal_limit
+        )
+        return EvidenceBundle(
+            snapshot=snapshot,
+            signals=signals,
+            alert=AlertEvidence(
+                group_key=webhook.group_key,
+                fingerprint=alert.fingerprint,
+                alert_name=alert.labels.get("alertname", "ProviderDegradation"),
+                status=alert.status,
+                severity=alert.labels.get("severity"),
+                truncated=webhook.truncated_alerts > 0,
+            ),
+            provider_events=provider_events,
+            external_signals=external_signals,
+            source=evidence_source,
+            collected_at=self._now(),
+        )
+
+    async def _collect_snapshot(
+        self, provider: ProviderId
+    ) -> tuple[MetricSnapshot, str]:
+        try:
+            snapshot = await self._metrics.collect(
+                provider, window_seconds=self._window_seconds
+            )
+            return snapshot, type(self._metrics).__name__
+        except MetricsUnavailable:
+            return (
+                MetricSnapshot(
+                    provider=provider,
+                    available=False,
+                    collection_error="metrics-source-unavailable",
+                    window_seconds=self._window_seconds,
+                    total_requests=0,
+                    request_rate_per_second=0,
+                    success_rate=0,
+                    error_rate=0,
+                    timeout_rate=0,
+                    p95_latency_ms=0,
+                    health_up=True,
+                ),
+                "metrics-unavailable",
+            )
 
     async def _create(
         self,

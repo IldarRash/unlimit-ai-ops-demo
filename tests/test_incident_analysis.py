@@ -119,6 +119,10 @@ async def test_openai_adapter_requests_strict_non_stored_structured_output() -> 
         "items"
     ]["enum"] == expected_refs
     assert schema["properties"]["response_code_explanations"]["maxItems"] == 0  # type: ignore[index]
+    assert schema["$defs"]["_ProposedConclusion"]["properties"]["statement"][  # type: ignore[index]
+        "maxLength"
+    ] == 320
+    assert "no more than\ntwo short sentences" in captured["instructions"]
     assert result.generated_by is AnalysisProvider.OPENAI
     assert result.causes[0].category == "technical"
     assert result.conclusion is not None

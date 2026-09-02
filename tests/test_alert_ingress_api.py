@@ -96,6 +96,7 @@ async def test_ingress_auth_known_path_and_allowlist_redaction(tmp_path) -> None
         incident = await client.get(f"/api/v1/incidents/{incident_id}")
         assert incident.json()["analysis"]["generated_by"] == "catalog"
 
+    await app.state.container.aclose()
     with sqlite3.connect(database) as connection:
         serialized_events = " ".join(
             row[0] for row in connection.execute("SELECT payload_json FROM provider_events")
