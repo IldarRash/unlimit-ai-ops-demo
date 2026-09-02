@@ -36,7 +36,7 @@ def test_configured_metrics_token_rejects_short_values(
         SurfaceAuth.from_environment()
 
 
-def test_railway_can_disable_unreliable_source_ip_guard() -> None:
+def test_source_ip_guard_can_be_disabled_only_by_explicit_configuration() -> None:
     request = Request(
         {
             "type": "http",
@@ -122,5 +122,16 @@ async def test_operator_auth_protects_surface_but_not_route_specific_integration
                 },
             )
             assert catalog.status_code == 200
+            response_catalog = await client.get(
+                "/api/v1/response-code-catalog",
+                headers={
+                    "x-catalog-admin-token": settings.catalog_admin_token.get_secret_value()
+                },
+            )
+            assert response_catalog.status_code == 200
+            assert {item["response_code"] for item in response_catalog.json()} >= {
+                "DO_NOT_HONOR",
+                "UPSTREAM_ERROR",
+            }
     finally:
         await app.state.container.aclose()

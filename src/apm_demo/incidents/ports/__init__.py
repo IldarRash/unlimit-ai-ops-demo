@@ -1,6 +1,9 @@
 """Dependency inversion ports used by the incident application layer."""
 
-from apm_demo.incidents.ports.analysis import AnalysisUnavailable, IncidentAnalyzer
+from apm_demo.incidents.ports.analysis import (
+    AnalysisUnavailable,
+    IncidentAnalyzer,
+)
 from apm_demo.incidents.ports.evidence import MetricsSource, MetricsUnavailable
 from apm_demo.incidents.ports.repositories import (
     AuditLog,
@@ -10,6 +13,7 @@ from apm_demo.incidents.ports.repositories import (
     IncidentRepository,
     KnownErrorCatalog,
     ProviderEventRepository,
+    ResponseCodeCatalog,
 )
 
 __all__ = [
@@ -24,4 +28,5 @@ __all__ = [
     "MetricsSource",
     "MetricsUnavailable",
     "ProviderEventRepository",
+    "ResponseCodeCatalog",
 ]

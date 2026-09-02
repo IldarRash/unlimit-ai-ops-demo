@@ -37,10 +37,13 @@ class PrometheusMetricsSource:
         base_url: str,
         *,
         timeout_seconds: float = 3,
+        username: str | None = None,
+        password: str | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
+        auth = (username, password) if username and password else None
         self._client = client or httpx.AsyncClient(
-            base_url=base_url.rstrip("/"), timeout=timeout_seconds
+            base_url=base_url.rstrip("/"), timeout=timeout_seconds, auth=auth
         )
         self._owns_client = client is None
 

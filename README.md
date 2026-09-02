@@ -1,253 +1,199 @@
-# Sentinel — AI-assisted payment incident intelligence
+# Payment Provider Incident Intelligence
 
-Sentinel is a working Technical Operations demo for investigating degradation across synthetic Alternative Payment Method (APM) providers. It combines realistic baseline payment traffic, controllable provider failures, Prometheus/Grafana observability, deterministic known-error handling, OpenAI-assisted investigation of unknown incidents, and an operator-controlled incident console.
+A working payment-operations demo: realistic provider traffic is observed by Prometheus and Grafana, alerts are converted into evidence-backed incidents, known incidents are handled by database rules, and OpenAI is used once only when the system cannot classify the incident.
 
-## What is implemented
-
-- Three weighted providers — AtlasPay, NovaBank, and OrbitWallet — with different payment methods, latency profiles, decline rates, technical-error rates, and health behavior.
-- Continuous healthy baseline traffic across merchants, regions, and payment methods. The rate can be changed from 1–100 RPS or stopped from the operator console.
-- Explicit scenarios for latency, timeout, health-check failure, known technical errors, unknown technical errors, business declines, and recovery to the provider baseline.
-- Prometheus metrics with bounded labels and two provisioned Grafana dashboards:
-  - provider traffic, success rate, actual versus target RPS, client versus provider p95, business declines, technical failures, health, and active scenario;
-  - Alertmanager delivery, incident classification, provider-event delivery, pipeline latency, feedback, and LLM circuit state.
-- Alertmanager integration for p95 latency, technical-error rate, business-decline rate, and provider health.
-- A catalog-first incident classifier:
-  - a known AtlasPay `UPSTREAM_ERROR` is answered deterministically from a versioned catalog without an LLM call;
-  - unknown technical errors and business anomalies are sent to OpenAI with normalized metrics and bounded provider events.
-- Quantitative incident evidence from Prometheus: exact outcome counts for the analysis window, affected attempts out of all provider traffic, and affected count/share for each payment method.
-- Response-code intelligence with explicit provenance: common and reviewed provider codes use the internal catalog; every uncatalogued code must receive exactly one bounded OpenAI explanation tied to sampled provider events.
-- OpenAI Responses API integration with strict JSON Schema, `store: false`, bounded retries, a circuit breaker, and validation that causes, code explanations, and the narrative conclusion refer only to supplied evidence.
-- A separate incident conclusion combines the model or catalog narrative with backend-computed time window, counts, shares, and an internal consistency check. The model is never trusted to calculate those numbers.
-- Structured causes that separate `business` from `technical` hypotheses and show: possible cause → why it is plausible → source metric/event.
-- Human-controlled incident lifecycle, advisory-only remediation, feedback capture, full audit trail, correlation, replay protection, and deduplication.
-- PostgreSQL persistence for the complete Compose/Railway runtime and SQLite as an explicit local/test fallback.
-- Same-origin operator API: the browser never needs direct access to private provider or traffic-generator services.
-- Authenticated external operational signals for provider status, support tickets, Slack/email escalations, merchant complaints, and operations reports. Only normalized, explicitly non-customer data enters the evidence bundle.
-- 76 automated tests covering domain contracts, quantitative evidence validation, OpenAI request/response validation with local fakes, the network-request gate, catalog bypass, external-signal ingestion, orchestration, API access control, demo controls, observability assets, and persistence selection.
-
-No production mock analyzer remains. Runtime configuration requires an `OPENAI_API_KEY`. A separate `APM_INCIDENT_OPENAI_REQUESTS_ENABLED` gate defaults to `false`, so a key can be configured without accidental external requests during local verification. Automated tests inject local fake analyzers and never call the external API.
-
-## How the pipeline works
+## How it works
 
 ```text
-weighted healthy traffic ──> synthetic providers ──> client/provider metrics ──> Prometheus ──> Grafana
-          │                         │                                             │
-          │                         └─ normalized non-success events              └─ alert rules
-          │                                           │                                  │
-          └─ operator scenarios                        ▼                                  ▼
-                                              provider-event store <──────── Alertmanager webhook
-                                                         │
-                                                         ▼
-                                                evidence bundle
-                                           metrics + signals + events
-                                                         │
-                                                         ▼
-                                               catalog-first classifier
-                                              /                        \
-                           known provider response                      unknown incident
-                           deterministic runbook                         OpenAI reasoning
-                                              \                        /
-                                                         ▼
-                                             PostgreSQL incident + audit
-                                                         │
-                                                         ▼
-                                           operator console + live stream
+Traffic generator
+      │
+      ├──> Provider emulators ──> normalized provider responses ──> PostgreSQL
+      │                                  (no customer payloads)
+      │
+      └──> Prometheus metrics ──> alert rules ──> Alertmanager
+                                          │
+Manual Analyze now ────────────────────────┤
+                                          ▼
+                                  Evidence collection
+                         metrics + alerts + provider events
+                              + external operational signals
+                                          │
+                                          ▼
+                          PostgreSQL response-code catalog
+                                          │
+                                          ▼
+                         PostgreSQL known-incident rules
+                              /                       \
+                   rule matched                  no rule matched
+                        │                              │
+              deterministic report             one OpenAI request
+                  no LLM call                 for the complete report
+                              \                       /
+                                          ▼
+                         verified quantitative conclusion
+                                          │
+                                          ▼
+                         PostgreSQL incident + audit trail
+                                          │
+                                          ▼
+                                  Operator console
 ```
 
-The deterministic boundary is deliberate. Thresholds, alert routing, known response codes, numeric traffic impact, deduplication, and lifecycle transitions are rules. OpenAI is used only when the normalized evidence does not match a reviewed catalog entry. Prompt `incident-v5` asks the model for structured causes, a bounded conclusion statement, uncatalogued-code explanations, and reversible investigation steps. The backend validates references and code coverage, then attaches its own verified counts and shares; the model cannot change routing, retry payments, or resolve an incident.
+The boundary is intentionally simple: there is one LLM decision point and no separate model call for an individual response code.
 
-The incident bounded context is under `src/apm_demo/incidents`:
+### Database catalogs and rules
 
-- `domain`: evidence, signals, cause hypotheses, incident, feedback, and audit contracts;
-- `ports`: metrics, analyzer, repositories, catalog, and provider-event interfaces;
-- `application`: anomaly detection, catalog-first classification, alert pipeline, and lifecycle use cases;
-- `infrastructure`: Prometheus, OpenAI, SQLite, PostgreSQL, and observability adapters;
-- `api`: configuration, dependency composition, protected integration routes, and same-origin demo controls;
-- `web`: dependency-free operator console.
+PostgreSQL is the runtime source of truth. SQLite implements the same ports for local tests and a single-process fallback.
 
-## Run locally with Docker Compose
+`response_code_definitions` is a versioned dictionary of reviewed response meanings:
 
-Requirements: Docker Desktop with Compose and a usable OpenAI API key.
+- `definition_id` and `version` identify history;
+- `provider = NULL` defines a global meaning;
+- a provider-specific definition overrides a global definition for the same code;
+- `name` and `description` are shown as database-catalog evidence;
+- only active definitions participate in analysis.
 
-1. Copy `.env.example` to the ignored `.env` file and replace placeholders.
-2. Create the four ignored secret files described in `secrets/README.md`.
-3. Start the stack:
+The application seeds reviewed demo definitions for `APPROVED`, `DO_NOT_HONOR`, `INVALID_ACCOUNT`, `PROVIDER_TIMEOUT`, `TRANSPORT_ERROR`, and the AtlasPay-specific `UPSTREAM_ERROR`. These are demo operational definitions, not claims copied from a real provider.
 
-```powershell
-docker compose up --build
-```
+`known_error_rules` contains versioned deterministic incident rules. A rule can match:
 
-Local endpoints:
+- provider and response code;
+- optionally outcome, payment method, and region;
+- the most specific active rule wins;
+- two equally specific overlapping rules are rejected as ambiguous.
 
-| Surface | URL |
-| --- | --- |
-| Incident console | `http://localhost:8002` |
-| Provider observability dashboard | `http://localhost:3000/d/apm-provider-observability/apm-provider-observability` |
-| Incident pipeline dashboard | `http://localhost:3000/d/incident-intelligence-pipeline/incident-intelligence-pipeline` |
-| Prometheus | `http://localhost:9090` |
-| Provider emulator API | `http://localhost:8000` |
-| Traffic generator API | `http://localhost:8001` |
+Each known-incident rule stores the reviewed headline, summary, impact, probable causes, operator decision, operator checks, confidence, and an optional reference URL. Catalog definitions explain response codes; known-error rules decide whether the incident itself is understood.
 
-The OpenAI key remains server-side and is never returned by the runtime API or exposed to the browser. With `APM_INCIDENT_OPENAI_REQUESTS_ENABLED=true`, applying an unknown-error or business-decline scenario can cause a paid OpenAI request after the alert fires or when the operator runs analysis.
+Both catalogs are durable database data. The protected APIs are:
 
-## Demo walkthrough: baseline → incident → recovery
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET/POST` | `/api/v1/response-code-catalog` | Read definitions or create a new version |
+| `GET/POST/PUT/DELETE` | `/api/v1/catalog/...` | Manage known-incident rule versions |
+| `GET` | `/api/v1/catalog/audit` | Read the known-rule audit trail |
 
-1. Open the provider Grafana dashboard and the incident console side by side.
-2. In the console, select each provider and use **Recover selected provider** if a previous scenario is active.
-3. Keep traffic enabled and set it to 20 RPS. The generator produces mostly successful traffic using the weighted provider, method, merchant, and region distributions.
-4. Observe the stable baseline in **Transaction rate by provider**, **Success rate by provider**, **Actual vs target traffic**, and **Active provider scenario**.
-5. Apply one scenario:
-   - **Known technical error (AtlasPay)** — deterministic catalog response, no OpenAI request;
-   - **Unknown technical error (OpenAI)** — unmapped OrbitWallet response;
-   - **Business decline (OpenAI)** — soft/hard declines rise while technical errors stay low;
-   - latency, timeout, or health-down scenarios for their dedicated alerts.
-6. The unaffected providers continue healthy traffic, so Grafana shows the degraded provider diverging from the baseline. The active-scenario and configured-behavior panels identify where the incident came from.
-7. Alert rules evaluate every 5 seconds and require 15–60 seconds of sustained degradation. The incident then appears automatically through Alertmanager; **Analyze now** can also evaluate the current metrics window.
-8. Inspect classification, evidence, cause category, rationale, source references, confidence, recommended checks, and audit history.
-9. Select the affected provider and use **Recover selected provider**. Grafana shows recovery while Alertmanager closes the firing condition.
+They require `X-Catalog-Admin-Token`. Runtime code contains only idempotent bootstrap seed data so a new database can start; classification always reads active records from persistence.
 
-## Configuration
+### The single LLM rule
 
-Use the ignored `.env` file for local values:
+The detector and classifier evaluate the following decision after evidence and database definitions have been loaded:
+
+| Condition | Report path | OpenAI |
+| --- | --- | --- |
+| Metrics remain inside configured thresholds | Treat individual failures as background traffic; do not create an incident | Not called |
+| An active `known_error_rules` entry matches a provider event | Build the full report from the stored rule | Not called |
+| No known-incident rule matches | Ask OpenAI for one complete structured incident report | Called once, only if the runtime gate is enabled |
+| No rule matches, but the OpenAI gate/key/provider is unavailable | Create a manual-review incident with concrete evidence checks | Not called or failed closed |
+| Catalog lookup is ambiguous | Stop automated reasoning and require manual review | Not called |
+
+An unknown response code does **not** independently trigger OpenAI. If the incident is unknown, the same single report request also receives:
+
+- reviewed database definitions as authoritative context;
+- the exact list of response codes missing from the database;
+- normalized provider events supporting each code.
+
+The same single response contains both the incident conclusion and exactly one bounded explanation for every missing code. The backend rejects missing, duplicate, extra, or unreferenced explanations. It also rejects `monitor-only` when any measured signal is critical.
+
+Every stored report contains one operator disposition:
+
+- `action-required` — investigate or intervene now using the listed safe checks;
+- `monitor-only` — likely background noise; no immediate change, but watch the stated escalation condition;
+- `manual-review` — the cause could not be classified safely, so a human must inspect the measured evidence before changing routing or retry behaviour.
+
+The operator console uses these operational labels and does not expose model or prompt terminology.
+
+### Full incident path
+
+1. The traffic generator continuously sends a weighted healthy baseline to AtlasPay, NovaBank, and OrbitWallet. A selected scenario changes one provider while the other traffic remains healthy.
+2. Prometheus collects request counts, outcome counts, latency histograms, health, and payment-method breakdowns. Only throughput is expressed as RPS; incident impact uses integer request counts.
+3. Non-success provider responses are normalized into allowlisted `ProviderEvent` records. Raw transactions, credentials, and customer data are not stored in the incident evidence.
+4. An Alertmanager webhook or the operator's **Analyze now** action starts the same pipeline.
+5. The backend collects a bounded evidence bundle: one Prometheus window, detected signals, up to 20 recent provider events, alert metadata, and sanitized external operational signals.
+6. Active `response_code_definitions` are resolved from the database. Provider-specific definitions take precedence over global definitions.
+7. Active `known_error_rules` are matched from most specific to least specific.
+8. If a rule matches, the application builds the narrative from reviewed database data and skips OpenAI. If no rule matches, one `incident-v6` OpenAI Responses request produces the complete narrative, operator disposition, causes, evidence references, recommended checks, and explanations for uncatalogued codes.
+9. Model output is advisory. The backend validates the JSON schema, evidence references, response-code coverage, and non-automatable recommendations.
+10. The backend—not the model—calculates the exact window, affected outcomes, affected/all traffic, percentage, and payment-method shares from Prometheus counts. Domain validation rejects inconsistent arithmetic.
+11. The incident is fingerprinted by provider and detected signal types. Manual analysis and a later Alertmanager notification reuse the same active incident, preventing a second paid analysis for the same degradation. The record is persisted with its evidence and audit event, streamed to the UI, and later resolved by Alertmanager recovery or an explicit operator action.
+
+The report therefore combines three clearly labelled sources:
+
+- **Database catalog** — reviewed code meanings and known-incident narratives;
+- **Investigation hypothesis** — generated by OpenAI only as part of a complete unknown incident report;
+- **Verified calculation** — time window, counts, shares, and payment-method impact calculated by the backend.
+
+OpenAI cannot change routing, retry payments, execute remediation, acknowledge, or resolve an incident. `APM_INCIDENT_OPENAI_REQUESTS_ENABLED` defaults to `false`, so configuring a key does not by itself authorize paid requests.
+
+## Deployed Railway demo
+
+| Surface | URL | Login |
+| --- | --- | --- |
+| Incident console | [incident-api-demo.up.railway.app](https://incident-api-demo.up.railway.app) | `demo-operator`; password is the Railway `incident-api` variable `DEMO_AUTH_PASSWORD` |
+| Grafana | [grafana-demo-0349.up.railway.app](https://grafana-demo-0349.up.railway.app) | `demo-viewer`; password is the Railway `grafana` variable `GRAFANA_TESTER_PASSWORD` |
+| Prometheus | [prometheus-demo-8480.up.railway.app](https://prometheus-demo-8480.up.railway.app) | `metrics-reader`; password is the Railway `grafana` variable `PROMETHEUS_WEB_PASSWORD` |
+
+Healthy weighted traffic starts automatically at 20 requests per second. The Railway environment has the paid-analysis gate enabled: **Unknown OrbitWallet error** makes a real OpenAI request when a new uncatalogued incident crosses a threshold. Use **Recover** after the demonstration. Known AtlasPay errors and background traffic do not call OpenAI.
+
+## Run locally
+
+Requirements: Docker Desktop with Docker Compose.
+
+1. Copy `.env.example` to `.env` and set local values:
 
 ```dotenv
 OPENAI_API_KEY=replace_with_your_real_key
 APM_INCIDENT_OPENAI_MODEL=gpt-5.4-mini
 APM_INCIDENT_OPENAI_REQUESTS_ENABLED=false
 APM_INCIDENT_LLM_TIMEOUT_SECONDS=30
-APM_REQUESTS_PER_SECOND=4
+APM_REQUESTS_PER_SECOND=20
 APM_INCIDENT_METRICS_MODE=prometheus
 APM_INCIDENT_GRAFANA_PUBLIC_URL=http://localhost:3000
-APM_INCIDENT_METRICS_TOKEN=replace_with_a_random_scrape_token
-APM_INCIDENT_EXTERNAL_SIGNAL_TOKEN=replace_with_a_random_external_signal_token
-GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=replace_with_a_random_admin_password
+APM_INCIDENT_PROMETHEUS_USERNAME=
+APM_INCIDENT_PROMETHEUS_PASSWORD=
 ```
 
-Operator Basic authentication is optional on localhost and required by the Railway design:
+2. Create the ignored secret files described in `secrets/README.md`: PostgreSQL password, provider-event token, catalog-admin token, and Alertmanager webhook token.
 
-```dotenv
-APM_INCIDENT_OPERATOR_AUTH_ENABLED=true
-DEMO_AUTH_USER=demo-operator
-DEMO_AUTH_PASSWORD=replace_with_a_random_operator_password
+3. Build and start the stack:
+
+```powershell
+docker compose up --build
 ```
 
-## HTTP API
+4. Wait for readiness:
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/health` | Service liveness |
-| `GET` | `/ready` | Persistence readiness without credential disclosure |
-| `GET` | `/metrics` | Pipeline metrics; dedicated bearer token required |
-| `GET` | `/api/v1/runtime` | Safe runtime metadata and Grafana links |
-| `GET` | `/api/v1/demo/control` | Read generator and provider state through the operator facade |
-| `PATCH` | `/api/v1/demo/traffic` | Start/stop traffic and change target RPS |
-| `POST` | `/api/v1/demo/scenarios` | Apply or recover a provider scenario |
-| `POST` | `/api/v1/incidents/analyze` | Run catalog-first analysis for one provider window |
-| `GET` | `/api/v1/incidents` | List and filter incidents |
-| `GET` | `/api/v1/incidents/{id}/audit` | Read the incident audit trail |
-| `PATCH` | `/api/v1/incidents/{id}/status` | Acknowledge or resolve an incident |
-| `POST` | `/api/v1/incidents/{id}/feedback` | Record operator feedback |
-| `POST` | `/api/v1/integrations/alertmanager` | Receive authenticated Alertmanager webhooks |
-| `POST` | `/api/v1/provider-events` | Store allowlisted, normalized provider evidence |
-| `GET/POST` | `/api/v1/external-signals` | List or ingest authenticated, sanitized operational signals |
-| `GET/POST/PUT/DELETE` | `/api/v1/catalog/...` | Manage versioned deterministic known-error rules |
+```powershell
+docker compose ps
+```
 
-OpenAPI documentation is at `http://localhost:8002/docs`.
+Local surfaces:
 
-## Assessment alignment
-
-The source assignment asks for practical, controlled improvement of APM operational workflows, with emphasis on incident triage, signal validation, summarization, routing, runbook support, and process automation. This repository now contains both the working-code demonstration and the written/evaluation artifacts. The approved local live-model verification is complete; public deployment remains explicitly gated below.
-
-### Assignment objective and scenario coverage
-
-| Requirement from the task | Status | Evidence |
-| --- | --- | --- |
-| Reduce manual signal review and evidence collection | Done | Alerts, Prometheus queries, normalized provider events, evidence bundles |
-| Improve consistency and decision speed | Done | Deterministic thresholds, catalog bypass, structured output, deduplication |
-| Payment dashboards and transaction metrics | Done | Two Grafana dashboards and weighted baseline traffic |
-| Provider/PSP status pages | Done | Authenticated `provider-status` signal contract and CLI adapter feed provider-scoped evidence |
-| Support tickets, Slack, email escalations | Done as normalized ingestion | Authenticated support/Slack/email signal types; source systems can call the adapter/API |
-| Merchant complaints and operational reports | Done as normalized ingestion | Authenticated merchant/operations signal types with count, region, severity, and source reference |
-| Manual operations checks | Done | Operator-triggered analysis, evidence-backed checks, incident lifecycle controls, and proposal runbook flow |
-| Working practical demonstration | Done in code | Compose stack, controls, scenarios, alerts, incidents, Grafana, Postgres |
-| Short written proposal with three AI use cases | Authored | Markdown and generated DOCX in `docs/submission`; final DOCX visual render check remains pending |
-
-### Evaluation criteria
-
-| Criterion | Current coverage | Remaining gap |
-| --- | --- | --- |
-| Operational thinking | Realistic provider-specific triage, business/technical separation, prioritization, recovery, handoffs, and assumptions | Covered in code, walkthrough, and proposal |
-| AI judgment | Rules handle known errors; OpenAI handles unknowns; failures close to manual review; use-case limits are explicit | Covered in classifier, proposal, evaluation plan, and live smoke evidence |
-| Agent design | Trigger, normalized inputs, decision branch, advisory actions, human status control, guardrails, audit trail | Covered in implementation and proposal diagram/narrative |
-| Automation mindset | Metrics → alert → evidence → classification → incident → operator feedback is automated; external signals join the evidence | Covered in runtime and authenticated integration API |
-| Communication | README, API docs, dashboards, compact operator UI, proposal, and reproducible evaluation are present | DOCX visual render certification remains before submission |
-
-### Optional bonus coverage
-
-| Bonus | Status |
+| Surface | URL |
 | --- | --- |
-| Prompt structure | Implemented as versioned system instructions plus strict JSON Schema |
-| Confidence and severity | Implemented |
-| Feedback loop | Feedback capture plus a documented repeatable evaluation/improvement loop |
-| Cost/latency trade-offs | Budget plus live token, cost, and latency evidence documented in `docs/evaluation/evaluation-plan.md` |
-| KPI framework | Accuracy, false-positive, bypass, evidence, helpfulness, latency, cost, MTTA, and MTTR targets documented |
+| Incident console | `http://localhost:8002` |
+| Provider Grafana dashboard | `http://localhost:3000/d/apm-provider-observability/apm-provider-observability` |
+| Incident pipeline dashboard | `http://localhost:3000/d/incident-intelligence-pipeline/incident-intelligence-pipeline` |
+| Prometheus | `http://localhost:9090` |
+| Incident OpenAPI | `http://localhost:8002/docs` |
 
-## Delivery graph status
+### Demo flow
 
-```text
-N0 Working prototype [done]
- ├──> N1 Written assessment package [authored; DOCX visual QA pending]
- ├──> N2 Evaluation and KPI package [done: 6/6 offline cases]
- ├──> N3 External signal integrations [done and locally verified]
- └──> N4 Enable gate and run live OpenAI smoke [done]
-          │
-          └──> N5 Complete unknown-incident end-to-end verification [done]
-                    │
-          N1 + N2 + N5 ──> N6 Railway deployment and public-access verification
-                              [configuration preparation local; public/secret changes require approval]
+1. Open Grafana and the incident console.
+2. Start traffic at 20 RPS.
+3. Open **Test scenarios**.
+4. Run **Known AtlasPay error** to demonstrate the database-rule path without OpenAI.
+5. Recover AtlasPay.
+6. Set `APM_INCIDENT_OPENAI_REQUESTS_ENABLED=true` only when a paid call is intended, rebuild the incident API, and run **Unknown OrbitWallet error** to demonstrate the single unknown-incident report request.
+7. Inspect the conclusion, verified traffic impact, causes, operator checks, response-code provenance, evidence details, and audit trail.
 
-N5 ──> N8 Prometheus outcome and payment-method counts [done]
-        ├──> N9 Catalog/LLM response-code explanations [done]
-        ├──> N10 Internally verified incident conclusion [done]
-        └──> N11 Grafana failure panels use counts [done]
-              N9 + N10 + N11 ──> N12 Compact quantitative incident UI [done]
-                                     └──> N13 Full regression suite [done: 76/76]
-                                            └──> N14 Local visual and paid prompt-v5 smoke
-                                                   [visual verification done; paid request requires approval]
+Stop the stack with:
+
+```powershell
+docker compose down
 ```
 
-Completion evidence for each node:
+Run the automated suite without external OpenAI requests:
 
-- `N1`: authored in Markdown and DOCX; rendering must be visually inspected before the DOCX is treated as submission-ready.
-- `N2`: complete with a six-case golden set, repeatable offline command, 6/6 measured result, KPI definitions, and model cost/latency budget.
-- `N3`: complete with an authenticated external-signal API/CLI, six normalized signal types, persistence, context collection, dashboard metric, failure tests, and a locally verified catalog-bypass incident.
-- `N4`: complete. An approved `gpt-5.4-mini` Responses request returned strict `incident-v4` output, request metadata, 3,464 input tokens, and 807 output tokens; the evidence artifact stores presence flags rather than credentials or request IDs.
-- `N5`: complete. Alertmanager opened the unknown OrbitWallet incident from Prometheus metrics, 20 normalized provider events, and one external signal; OpenAI produced two grounded causes and four advisory actions, the UI was visually verified, and the incident automatically resolved after recovery.
-- `N6`: healthy Railway services, protected public URLs, PostgreSQL persistence, and rollback evidence.
-- `N8`: complete. The evidence snapshot stores provider totals and a bounded `payment_method × outcome` breakdown from Prometheus; transport failures are normalized into technical provider-error counts.
-- `N9`: complete in code. Built-in and versioned catalog definitions are authoritative; strict output requires one explanation for each unknown code and rejects missing, extra, duplicate, or ungrounded entries.
-- `N10`: complete in code. Narrative conclusions carry evidence references while the backend calculates and validates the exact window, affected count, total count, share, and per-method impact.
-- `N11`: complete in code. Business-decline and technical-failure panels now use integer `increase(...)` transaction counts; throughput panels intentionally remain in requests per second.
-- `N12`: complete in code. The console presents quantities before rates, a verified conclusion card, per-method impact, and grouped response-code evidence with description, sample facts, and provenance.
-- `N13`: complete. The full suite passes 76/76, including strict unknown-code coverage, internal numeric consistency, transport-error aggregation, Grafana count queries, and UI provenance labels.
-- `N14`: the rebuilt Compose stack and browser UI are verified. A known AtlasPay incident displayed exact counts, a 300-second interval, per-method impact, catalog descriptions, and provenance; Grafana displayed integer decline/failure counts while throughput remained RPS. One live `incident-v5` unknown-code request remains and will run only with explicit paid-request approval.
-
-### Evaluation and submission artifacts
-
-- `docs/submission/unlimit-ai-assessment-proposal.md` — readable source proposal.
-- `docs/submission/unlimit-ai-assessment-proposal.docx` — generated proposal; visual render QA is still required.
-- `docs/evaluation/evaluation-plan.md` — KPIs, quality gates, latency/cost budgets, and improvement loop.
-- `docs/evaluation/offline-eval-results.json` — current deterministic result: 6/6 cases passed without network or paid model use.
-- `docs/evaluation/live-openai-smoke.json` — sanitized local end-to-end OpenAI timing, usage, grounding, and recovery evidence.
-- `tests/fixtures/golden_incidents.json` — versioned golden incident set.
-
-## Railway deployment
-
-Railway is designed as separate services plus managed PostgreSQL. The machine-readable inventory is `railway/services.json`; network boundaries, variables, rollout order, verification, and rollback are documented in `docs/architecture/railway-deployment.md`.
-
-Only Grafana, Prometheus, and the Incident API/UI should receive public domains. Provider emulator, traffic generator, Alertmanager, and PostgreSQL remain on private networking. Public-domain creation and credential uploads remain explicit rollout gates; paid OpenAI traffic remains disabled by default per environment.
-
-## Verification boundary
-
-The repository has 76 passing automated tests. The rebuilt Compose stack, healthy baseline traffic, UI controls, quantitative incident view, Grafana count panels, Prometheus targets, PostgreSQL persistence, and known catalog bypass are verified locally. The earlier `incident-v4` live run completed in about 57.4 seconds, used 3,464 input and 807 output tokens, displayed grounded causes, and resolved after recovery. One approved paid `incident-v5` smoke remains in `N14`; Railway secret upload, public domains, and deployment verification remain protected `N6` actions.
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```

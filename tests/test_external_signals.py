@@ -18,7 +18,9 @@ class CapturingAnalyzer:
     def __init__(self) -> None:
         self.evidence: EvidenceBundle | None = None
 
-    async def analyze(self, evidence: EvidenceBundle) -> IncidentAnalysis:
+    async def analyze(
+        self, evidence: EvidenceBundle, *, response_code_definitions=()
+    ) -> IncidentAnalysis:
         self.evidence = evidence
         source = f"external:{evidence.external_signals[0].signal_id}"
         return IncidentAnalysis(

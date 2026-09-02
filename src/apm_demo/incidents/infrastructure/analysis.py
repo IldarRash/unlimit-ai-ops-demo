@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from random import uniform
 from time import monotonic
 
@@ -10,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from apm_demo.incidents.application.conclusion import build_conclusion
 from apm_demo.incidents.application.response_codes import (
-    builtin_response_insights,
+    catalog_response_insights,
     unresolved_response_codes,
 )
 from apm_demo.incidents.domain import (
@@ -18,7 +19,10 @@ from apm_demo.incidents.domain import (
     CauseHypothesis,
     EvidenceBundle,
     IncidentAnalysis,
+    IncidentSeverity,
+    OperatorDisposition,
     RemediationAction,
+    ResponseCodeDefinition,
     ResponseCodeInsight,
     ResponseInsightSource,
 )
@@ -34,9 +38,14 @@ Use internal_response_catalog definitions as authoritative and do not redefine t
 Return exactly one response_code_explanations item for every unresolved_response_codes value and no others.
 The conclusion statement must explain the operational finding without inventing numeric quantities; verified
 counts, shares, payment-method impact, and the exact time window are calculated by the application.
+Set operator_disposition to action-required when an operator should investigate or intervene now.
+Set it to monitor-only only for likely background noise that needs observation but no immediate action.
+Critical evidence can never be monitor-only. operator_decision must state the concrete next step or
+the exact condition that should trigger escalation, without mentioning AI, LLMs, prompts, or automation.
 Recommend reversible operator checks before mitigation. Return only the requested schema.
 """
-PROMPT_VERSION = "incident-v5"
+PROMPT_VERSION = "incident-v6"
+logger = logging.getLogger("apm_demo.incidents.analysis")
 
 
 class _ProposedCause(BaseModel):
@@ -80,6 +89,8 @@ class _StructuredAnalysis(BaseModel):
     headline: str = Field(min_length=1, max_length=120)
     summary: str = Field(min_length=1, max_length=1_000)
     impact: str = Field(min_length=1, max_length=600)
+    operator_disposition: OperatorDisposition
+    operator_decision: str = Field(min_length=1, max_length=600)
     probable_causes: tuple[str, ...] = Field(min_length=1, max_length=5)
     causes: tuple[_ProposedCause, ...] = Field(min_length=1, max_length=5)
     conclusion: _ProposedConclusion
@@ -133,13 +144,18 @@ class OpenAIIncidentAnalyzer:
         )
         self._owns_client = client is None
 
-    async def analyze(self, evidence: EvidenceBundle) -> IncidentAnalysis:
+    async def analyze(
+        self,
+        evidence: EvidenceBundle,
+        *,
+        response_code_definitions: tuple[ResponseCodeDefinition, ...] = (),
+    ) -> IncidentAnalysis:
         if not self._requests_enabled:
             raise AnalysisUnavailable("OpenAI requests are disabled by the runtime gate")
         async with self._state_lock:
             if monotonic() < self._circuit_open_until:
                 raise AnalysisUnavailable("OpenAI analysis circuit is open")
-        request = self._build_request(evidence)
+        request = self._build_request(evidence, response_code_definitions)
         for attempt in range(1, self._max_attempts + 1):
             try:
                 response = await self._client.post("/responses", json=request)
@@ -161,6 +177,7 @@ class OpenAIIncidentAnalyzer:
                 return self._to_domain(
                     parsed,
                     evidence=evidence,
+                    response_code_definitions=response_code_definitions,
                     request_id=response.headers.get("x-request-id"),
                     input_tokens=self._optional_int(usage.get("input_tokens")),
                     output_tokens=self._optional_int(usage.get("output_tokens")),
@@ -179,6 +196,12 @@ class OpenAIIncidentAnalyzer:
                     and (error.response.status_code == 429 or error.response.status_code >= 500)
                 )
                 if not retryable or attempt == self._max_attempts:
+                    logger.warning(
+                        "incident analysis response rejected: attempt=%s type=%s reason=%s",
+                        attempt,
+                        type(error).__name__,
+                        str(error)[:300],
+                    )
                     await self._record_failure()
                     raise AnalysisUnavailable("OpenAI analysis failed") from error
                 retry_after = (
@@ -235,12 +258,28 @@ class OpenAIIncidentAnalyzer:
     def _optional_int(value: object) -> int | None:
         return value if isinstance(value, int) and value >= 0 else None
 
-    def _build_request(self, evidence: EvidenceBundle) -> dict[str, object]:
+    def _build_request(
+        self,
+        evidence: EvidenceBundle,
+        response_code_definitions: tuple[ResponseCodeDefinition, ...] = (),
+    ) -> dict[str, object]:
         normalized_evidence = evidence.model_dump(mode="json")
         allowed_refs = self._allowed_evidence_refs(evidence)
-        catalog_insights = builtin_response_insights(evidence.provider_events)
-        unresolved_codes = unresolved_response_codes(evidence.provider_events)
+        catalog_insights = catalog_response_insights(
+            evidence.provider_events, response_code_definitions
+        )
+        unresolved_codes = unresolved_response_codes(
+            evidence.provider_events, response_code_definitions
+        )
         output_schema = _StructuredAnalysis.model_json_schema()
+        if any(
+            signal.severity is IncidentSeverity.CRITICAL
+            for signal in evidence.signals
+        ):
+            output_schema["$defs"]["OperatorDisposition"]["enum"] = [
+                OperatorDisposition.ACTION_REQUIRED.value,
+                OperatorDisposition.MANUAL_REVIEW.value,
+            ]
         output_schema["$defs"]["_ProposedCause"]["properties"]["evidence_refs"][
             "items"
         ] = {"type": "string", "enum": list(allowed_refs)}
@@ -299,6 +338,7 @@ class OpenAIIncidentAnalyzer:
         parsed: _StructuredAnalysis,
         *,
         evidence: EvidenceBundle,
+        response_code_definitions: tuple[ResponseCodeDefinition, ...],
         request_id: str | None,
         input_tokens: int | None,
         output_tokens: int | None,
@@ -315,7 +355,11 @@ class OpenAIIncidentAnalyzer:
         )
         if any(ref not in allowed_refs for ref in submitted_refs):
             raise ValueError("analysis referenced evidence outside the supplied bundle")
-        expected_codes = set(unresolved_response_codes(evidence.provider_events))
+        expected_codes = set(
+            unresolved_response_codes(
+                evidence.provider_events, response_code_definitions
+            )
+        )
         returned_codes = [
             insight.response_code for insight in parsed.response_code_explanations
         ]
@@ -323,7 +367,19 @@ class OpenAIIncidentAnalyzer:
             raise ValueError("analysis returned duplicate response-code explanations")
         if set(returned_codes) != expected_codes:
             raise ValueError("analysis did not explain exactly the unresolved response codes")
-        response_insights = list(builtin_response_insights(evidence.provider_events))
+        if (
+            parsed.operator_disposition is OperatorDisposition.MONITOR_ONLY
+            and any(
+                signal.severity is IncidentSeverity.CRITICAL
+                for signal in evidence.signals
+            )
+        ):
+            raise ValueError("critical evidence cannot be classified as monitor-only")
+        response_insights = list(
+            catalog_response_insights(
+                evidence.provider_events, response_code_definitions
+            )
+        )
         response_insights.extend(
             ResponseCodeInsight(
                 response_code=insight.response_code,
@@ -338,6 +394,8 @@ class OpenAIIncidentAnalyzer:
             headline=parsed.headline,
             summary=parsed.summary,
             impact=parsed.impact,
+            operator_disposition=parsed.operator_disposition,
+            operator_decision=parsed.operator_decision,
             probable_causes=parsed.probable_causes,
             causes=tuple(CauseHypothesis.model_validate(cause.model_dump()) for cause in parsed.causes),
             conclusion=build_conclusion(

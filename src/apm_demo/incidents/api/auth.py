@@ -96,7 +96,9 @@ def is_integration_or_catalog_path(path: str) -> bool:
         "/api/v1/integrations/alertmanager",
         "/api/v1/provider-events",
         "/api/v1/external-signals",
-    } or path.startswith("/api/v1/catalog")
+    } or path.startswith("/api/v1/catalog") or path.startswith(
+        "/api/v1/response-code-catalog"
+    )
 
 
 def is_operator_authorized(request: Request, auth: SurfaceAuth) -> bool:

@@ -204,10 +204,15 @@ def test_failure_dashboards_show_transaction_counts_not_rates() -> None:
 def test_incident_console_exposes_verified_counts_and_response_provenance() -> None:
     app = (ROOT / "src/apm_demo/incidents/web/app.js").read_text(encoding="utf-8")
 
-    assert "Total attempts" in app
+    assert 'metric("Attempts"' in app
     assert "Affected / all traffic" in app
     assert "Affected share by payment method" in app
     assert "Response-code evidence" in app
-    assert "Internal catalog" in app
-    assert "OpenAI hypothesis" in app
+    assert "Database catalog" in app
+    assert "recent provider event" in app
+    assert "Investigation hypothesis" in app
+    assert "Action required" in app
+    assert "Monitor only" in app
+    assert "OpenAI assessment" not in app
+    assert "Automated analysis" not in app
     assert "not full traffic" in app

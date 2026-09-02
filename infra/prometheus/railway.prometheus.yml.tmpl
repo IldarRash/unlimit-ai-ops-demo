@@ -9,20 +9,20 @@ alerting:
   alertmanagers:
     - static_configs:
         - targets:
-            - alertmanager.railway.internal:9093
+            - alertmanager.railway.internal:8080
 
 scrape_configs:
   - job_name: provider-emulator
     metrics_path: /metrics
     static_configs:
       - targets:
-          - provider-emulator.railway.internal:8000
+          - provider-emulator.railway.internal:8080
 
   - job_name: traffic-generator
     metrics_path: /metrics
     static_configs:
       - targets:
-          - traffic-generator.railway.internal:8001
+          - traffic-generator.railway.internal:8080
 
   - job_name: incident-api
     metrics_path: /metrics
@@ -31,4 +31,4 @@ scrape_configs:
       credentials: __APM_INCIDENT_METRICS_TOKEN__
     static_configs:
       - targets:
-          - incident-api.railway.internal:8002
+          - incident-api.railway.internal:8080

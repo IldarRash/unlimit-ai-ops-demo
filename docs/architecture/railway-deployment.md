@@ -8,7 +8,7 @@
 - Source: private GitHub repository `unlimit-ai-ops-demo`.
 - Constraint: use the current Railway plan only; do not purchase or upgrade anything.
 
-Railway deploys each component as an independent service. Internal calls use Railway private DNS in the form `<service>.railway.internal`; only the explicitly approved user-facing services receive public domains.
+Railway deploys each component as an independent service. Internal calls use Railway private DNS in the form `<service>.railway.internal:8080`, matching Railway's injected runtime `PORT`; only the explicitly approved user-facing services receive public domains. The component-specific ports below remain the local Docker Compose ports.
 
 ## Service graph
 
@@ -37,7 +37,7 @@ The runtime flow is:
 
 - Incident UI and ordinary Incident API routes use HTTP Basic authentication.
 - Alertmanager ingestion, provider-event ingestion, external-signal ingestion, catalog administration, and Prometheus scraping of Incident API metrics each use a separate bearer token in Railway.
-- Railway does not publish a stable private-service CIDR for application allowlists. The Railway deployment therefore disables the optional source-IP guard and treats each route's dedicated high-entropy bearer token as the authoritative control. Local/Compose operation retains source-network validation by default.
+- Railway does not publish a stable application-specific private-service CIDR. The deployment keeps source-network validation enabled and accepts only loopback plus standard private IPv4 and unique-local IPv6 ranges. Every ingestion route also requires its own high-entropy bearer token, so network location alone is never sufficient.
 - Prometheus public access uses its native web configuration with a bcrypt password hash.
 - Grafana anonymous access is disabled; its administrator account is configured from Railway secrets.
 - Alertmanager, the provider emulator, traffic generator, and PostgreSQL remain private and receive no public domain.
@@ -70,16 +70,17 @@ Railway reference variables are used for service-to-service URLs and managed Pos
 
 | Service | Variable | Railway value/source |
 | --- | --- | --- |
-| `traffic-generator` | `APM_PROVIDER_BASE_URL` | private URL for `provider-emulator:8000` |
-| `traffic-generator` | `APM_INCIDENT_API_URL` | private URL for `incident-api:8002` |
+| `traffic-generator` | `APM_PROVIDER_BASE_URL` | `http://provider-emulator.railway.internal:8080` |
+| `traffic-generator` | `APM_INCIDENT_API_URL` | `http://incident-api.railway.internal:8080` |
 | `traffic-generator` | `APM_PROVIDER_EVENT_TOKEN` | same secret value as Incident API provider-event token |
-| `grafana` | `PROMETHEUS_URL` | private URL for `prometheus:9090` |
+| `grafana` | `PROMETHEUS_URL` | `http://prometheus.railway.internal:8080` |
 | `incident-api` | `APM_INCIDENT_METRICS_MODE` | `prometheus` |
-| `incident-api` | `APM_INCIDENT_PROMETHEUS_URL` | private URL for `prometheus:9090` |
-| `incident-api` | `APM_INCIDENT_TRAFFIC_GENERATOR_URL` | private URL for `traffic-generator:8001` |
-| `incident-api` | `APM_INCIDENT_PROVIDER_EMULATOR_URL` | private URL for `provider-emulator:8000` |
+| `incident-api` | `APM_INCIDENT_PROMETHEUS_URL` | `http://prometheus.railway.internal:8080` |
+| `incident-api` | `APM_INCIDENT_TRAFFIC_GENERATOR_URL` | `http://traffic-generator.railway.internal:8080` |
+| `incident-api` | `APM_INCIDENT_PROVIDER_EMULATOR_URL` | `http://provider-emulator.railway.internal:8080` |
 | `incident-api` | `APM_INCIDENT_GRAFANA_PUBLIC_URL` | approved Grafana public URL after domain creation |
-| `incident-api` | `APM_INCIDENT_ENFORCE_INGRESS_NETWORKS` | `false`; bearer tokens remain mandatory |
+| `incident-api` | `APM_INCIDENT_ENFORCE_INGRESS_NETWORKS` | `true` |
+| `incident-api` | `APM_INCIDENT_TRUSTED_INGRESS_NETWORKS` | loopback, RFC 1918 IPv4, and unique-local IPv6 ranges; bearer tokens remain mandatory |
 | `incident-api` | `APM_INCIDENT_OPENAI_MODEL` | `gpt-5.4-mini` |
 | `incident-api` | `APM_INCIDENT_OPENAI_REQUESTS_ENABLED` | `false` until the separately approved live smoke |
 | `incident-api` | `DATABASE_URL` | managed PostgreSQL reference variable |
@@ -95,7 +96,7 @@ Railway reference variables are used for service-to-service URLs and managed Pos
 7. Deploy private services first, then Prometheus, Grafana, and Incident API.
 8. Ask for separate just-in-time approval before creating each public domain.
 9. Verify health, authentication, private connectivity, alert ingestion, PostgreSQL persistence, and browser surfaces.
-10. Ask for separate just-in-time approval immediately before the first paid OpenAI request, then verify one unknown-error incident end to end.
+10. With the author's paid-request approval, enable the runtime gate and verify exactly one unknown-error incident end to end. Recover the provider immediately after the check so continuous healthy traffic does not create repeated paid analyses.
 
 ## Verification and rollback
 

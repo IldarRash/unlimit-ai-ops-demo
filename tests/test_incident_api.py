@@ -15,7 +15,9 @@ class FakeAnalyzer:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def analyze(self, evidence):  # type: ignore[no-untyped-def]
+    async def analyze(
+        self, evidence, *, response_code_definitions=()
+    ):  # type: ignore[no-untyped-def]
         self.calls += 1
         return IncidentAnalysis(
             headline="Provider degradation",
@@ -148,7 +150,16 @@ async def test_manual_analysis_uses_known_error_catalog_before_openai(tmp_path) 
                 "/api/v1/incidents/analyze", json={"provider": "atlas-pay"}
             )
         assert response.status_code == 200
-        assert response.json()["incident"]["analysis"]["generated_by"] == "catalog"
+        analysis = response.json()["incident"]["analysis"]
+        assert analysis["generated_by"] == "catalog"
+        upstream = next(
+            item
+            for item in analysis["response_code_insights"]
+            if item["response_code"] == "UPSTREAM_ERROR"
+        )
+        assert upstream["name"] == "Upstream processing error"
+        assert upstream["source"] == "catalog"
+        assert upstream["catalog_rule_id"] == "atlas-upstream-error:v1"
         assert analyzer.calls == 0
     finally:
         await app.state.container.aclose()

@@ -20,12 +20,13 @@ from apm_demo.incidents.domain import (
     IncidentStatus,
     KnownErrorRule,
     ProviderEvent,
+    ResponseCodeDefinition,
     utc_now,
 )
 from apm_demo.incidents.infrastructure.sqlite import CatalogAmbiguityError
 
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 _MIGRATION_LOCK = "apm_demo_incidents_schema"
 
 
@@ -78,6 +79,8 @@ class PostgresIncidentStore:
                         await self._migrate_legacy_analysis_provider(connection)
                     elif version == 3:
                         await self._create_external_signals(connection)
+                    elif version == 4:
+                        await self._create_response_code_catalog(connection)
                     await connection.execute(
                         "INSERT INTO schema_migrations(version) VALUES (%s)",
                         (version,),
@@ -240,6 +243,31 @@ class PostgresIncidentStore:
             """
         )
 
+    @staticmethod
+    async def _create_response_code_catalog(
+        connection: AsyncConnection[Any],
+    ) -> None:
+        await connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS response_code_definitions (
+                definition_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                provider TEXT,
+                response_code TEXT NOT NULL,
+                active BOOLEAN NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                payload_json JSONB NOT NULL,
+                PRIMARY KEY(definition_id, version)
+            )
+            """
+        )
+        await connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS response_code_definitions_match_idx
+            ON response_code_definitions(response_code, provider, active)
+            """
+        )
+
     async def ping(self) -> bool:
         async with self._pool.connection() as connection:
             result = await connection.execute("SELECT 1")
@@ -392,6 +420,102 @@ class PostgresIncidentStore:
         self, provider: ProviderId, *, limit: int = 20
     ) -> tuple[ProviderEvent, ...]:
         return await self.list_recent_events(provider, limit=limit)
+
+    async def create_response_code_version(
+        self, definition: ResponseCodeDefinition
+    ) -> ResponseCodeDefinition:
+        provider = definition.provider.value if definition.provider else None
+        async with self._pool.connection() as connection:
+            async with connection.transaction():
+                lock_key = f"response-code:{provider or '*'}:{definition.response_code}"
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,)
+                )
+                duplicate = await connection.execute(
+                    """
+                    SELECT definition_id FROM response_code_definitions
+                    WHERE active = TRUE AND response_code = %s
+                      AND provider IS NOT DISTINCT FROM %s
+                      AND definition_id != %s
+                    LIMIT 1
+                    """,
+                    (
+                        definition.response_code,
+                        provider,
+                        definition.definition_id,
+                    ),
+                )
+                duplicate_row = await duplicate.fetchone()
+                if duplicate_row is not None:
+                    raise CatalogAmbiguityError(
+                        f"response code definition overlaps {duplicate_row[0]}"
+                    )
+                version_result = await connection.execute(
+                    """
+                    SELECT COALESCE(MAX(version), 0) + 1
+                    FROM response_code_definitions WHERE definition_id = %s
+                    """,
+                    (definition.definition_id,),
+                )
+                version_row = await version_result.fetchone()
+                assert version_row is not None
+                stored = definition.model_copy(
+                    update={"version": version_row[0], "created_at": utc_now()}
+                )
+                if stored.active:
+                    await connection.execute(
+                        """
+                        UPDATE response_code_definitions SET active = FALSE
+                        WHERE definition_id = %s
+                        """,
+                        (stored.definition_id,),
+                    )
+                await connection.execute(
+                    """
+                    INSERT INTO response_code_definitions(
+                        definition_id, version, provider, response_code, active,
+                        created_at, payload_json
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        stored.definition_id,
+                        stored.version,
+                        provider,
+                        stored.response_code,
+                        stored.active,
+                        stored.created_at,
+                        self._json(stored),
+                    ),
+                )
+        return stored
+
+    async def list_response_code_definitions(
+        self, *, include_inactive: bool = False
+    ) -> tuple[ResponseCodeDefinition, ...]:
+        where = "" if include_inactive else "WHERE active = TRUE"
+        rows = await self._fetchall(
+            f"""
+            SELECT active, payload_json FROM response_code_definitions {where}
+            ORDER BY response_code, provider NULLS FIRST, version DESC
+            """,
+            (),
+        )
+        return tuple(
+            ResponseCodeDefinition.model_validate(payload).model_copy(
+                update={"active": active}
+            )
+            for active, payload in rows
+        )
+
+    async def resolve_response_codes(
+        self, events: tuple[ProviderEvent, ...]
+    ) -> tuple[ResponseCodeDefinition, ...]:
+        definitions = await self.list_response_code_definitions()
+        return tuple(
+            definition
+            for definition in definitions
+            if any(definition.matches(event) for event in events)
+        )
 
     async def create_version(self, rule: KnownErrorRule) -> KnownErrorRule:
         async with self._pool.connection() as connection:

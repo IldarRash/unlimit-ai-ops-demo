@@ -3,90 +3,53 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from apm_demo.incidents.domain import (
-    KnownErrorRule,
     ProviderEvent,
+    ResponseCodeDefinition,
     ResponseCodeInsight,
     ResponseInsightSource,
 )
 
 
-BUILTIN_RESPONSE_GLOSSARY: dict[str, tuple[str, str]] = {
-    "APPROVED": (
-        "Approved payment",
-        "The provider accepted the payment attempt and returned a successful response.",
-    ),
-    "DO_NOT_HONOR": (
-        "Issuer declined",
-        "The payment was declined without a more specific issuer reason; operator action should focus on aggregate patterns rather than retrying an individual payment.",
-    ),
-    "INVALID_ACCOUNT": (
-        "Invalid account details",
-        "The provider reports that the submitted account or payment credentials are not valid for processing.",
-    ),
-    "PROVIDER_TIMEOUT": (
-        "Provider timeout",
-        "The provider did not return a payment response before the configured client timeout.",
-    ),
-    "TRANSPORT_ERROR": (
-        "Transport failure",
-        "The client could not complete the network exchange with the provider.",
-    ),
-}
-
-
-def builtin_response_insights(
+def catalog_response_insights(
     events: Iterable[ProviderEvent],
+    definitions: Iterable[ResponseCodeDefinition],
 ) -> tuple[ResponseCodeInsight, ...]:
     event_tuple = tuple(events)
     grouped = _group_events(event_tuple)
+    resolved = _definitions_by_code(event_tuple, definitions)
     return tuple(
         ResponseCodeInsight(
             response_code=code,
-            name=BUILTIN_RESPONSE_GLOSSARY[code][0],
-            description=BUILTIN_RESPONSE_GLOSSARY[code][1],
+            name=definition.name,
+            description=definition.description,
             source=ResponseInsightSource.CATALOG,
             evidence_refs=tuple(
                 f"event:{event.event_id}" for event in grouped[code][:24]
             ),
-            catalog_rule_id="builtin-response-glossary-v1",
+            catalog_rule_id=f"{definition.definition_id}:v{definition.version}",
         )
-        for code in sorted(grouped)
-        if code in BUILTIN_RESPONSE_GLOSSARY
-    )
-
-
-def catalog_response_insight(
-    rule: KnownErrorRule, events: Iterable[ProviderEvent]
-) -> ResponseCodeInsight:
-    matching = tuple(event for event in events if rule.matches(event))
-    if not matching:
-        raise ValueError("catalog response insight requires a matching event")
-    return ResponseCodeInsight(
-        response_code=rule.response_code,
-        name=rule.response_name or rule.headline,
-        description=rule.response_description or rule.summary,
-        source=ResponseInsightSource.CATALOG,
-        evidence_refs=tuple(f"event:{event.event_id}" for event in matching[:24]),
-        catalog_rule_id=rule.rule_id,
+        for code, definition in sorted(resolved.items())
     )
 
 
 def unavailable_response_insights(
     events: Iterable[ProviderEvent],
+    definitions: Iterable[ResponseCodeDefinition] = (),
 ) -> tuple[ResponseCodeInsight, ...]:
     event_tuple = tuple(events)
     grouped = _group_events(event_tuple)
-    builtin = {
-        item.response_code: item for item in builtin_response_insights(event_tuple)
+    catalog = {
+        item.response_code: item
+        for item in catalog_response_insights(event_tuple, definitions)
     }
     return tuple(
-        builtin.get(code)
+        catalog.get(code)
         or ResponseCodeInsight(
             response_code=code,
             name="Uncatalogued provider response",
             description=(
-                "No reviewed catalog definition or validated model explanation is "
-                "available for this response code."
+                "No reviewed database catalog definition or validated model "
+                "explanation is available for this response code."
             ),
             source=ResponseInsightSource.UNAVAILABLE,
             evidence_refs=tuple(
@@ -97,12 +60,37 @@ def unavailable_response_insights(
     )
 
 
-def unresolved_response_codes(events: Iterable[ProviderEvent]) -> tuple[str, ...]:
+def unresolved_response_codes(
+    events: Iterable[ProviderEvent],
+    definitions: Iterable[ResponseCodeDefinition] = (),
+) -> tuple[str, ...]:
+    event_tuple = tuple(events)
+    resolved = _definitions_by_code(event_tuple, definitions)
     return tuple(
-        code
-        for code in sorted(_group_events(events))
-        if code not in BUILTIN_RESPONSE_GLOSSARY
+        code for code in sorted(_group_events(event_tuple)) if code not in resolved
     )
+
+
+def _definitions_by_code(
+    events: tuple[ProviderEvent, ...],
+    definitions: Iterable[ResponseCodeDefinition],
+) -> dict[str, ResponseCodeDefinition]:
+    selected: dict[str, ResponseCodeDefinition] = {}
+    for definition in definitions:
+        if not any(definition.matches(event) for event in events):
+            continue
+        existing = selected.get(definition.response_code)
+        if existing is None or definition.specificity > existing.specificity:
+            selected[definition.response_code] = definition
+            continue
+        if definition.specificity == existing.specificity and (
+            definition.definition_id != existing.definition_id
+            or definition.version != existing.version
+        ):
+            raise ValueError(
+                "multiple response-code definitions match at equal specificity"
+            )
+    return selected
 
 
 def _group_events(events: Iterable[ProviderEvent]) -> dict[str, list[ProviderEvent]]:

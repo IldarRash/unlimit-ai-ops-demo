@@ -23,7 +23,6 @@ from apm_demo.incidents.domain import (
 from apm_demo.incidents.ports import (
     AuditLog,
     ExternalSignalRepository,
-    IncidentAnalyzer,
     IncidentRepository,
     MetricsSource,
     ProviderEventRepository,
@@ -36,19 +35,17 @@ class AnalyzeProviderIncident:
         *,
         metrics: MetricsSource,
         detector: AnomalyDetector,
-        analyzer: IncidentAnalyzer,
+        classifier: IncidentClassifier,
         incidents: IncidentRepository,
         audit_log: AuditLog,
         provider_events: ProviderEventRepository | None = None,
         external_signals: ExternalSignalRepository | None = None,
-        classifier: IncidentClassifier | None = None,
         event_limit: int = 20,
         external_signal_limit: int = 12,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
         self._metrics = metrics
         self._detector = detector
-        self._analyzer = analyzer
         self._incidents = incidents
         self._audit_log = audit_log
         self._provider_events = provider_events
@@ -140,8 +137,6 @@ class AnalyzeProviderIncident:
         return stored
 
     async def _classify(self, evidence: EvidenceBundle):
-        if self._classifier is None:
-            return await self._analyzer.analyze(evidence)
         return (await self._classifier.classify(evidence)).analysis
 
     async def _audit(

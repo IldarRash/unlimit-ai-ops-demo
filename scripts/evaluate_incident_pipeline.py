@@ -38,6 +38,11 @@ class StaticCatalog:
     async def match(self, event: ProviderEvent) -> KnownErrorRule | None:
         return self.rule if self.rule.matches(event) else None
 
+    async def resolve_response_codes(
+        self, events: tuple[ProviderEvent, ...]
+    ) -> tuple[object, ...]:
+        return ()
+
 
 class OfflineAnalyzer:
     """Deterministic evaluator stub; it never performs network requests."""
@@ -45,7 +50,9 @@ class OfflineAnalyzer:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def analyze(self, evidence: EvidenceBundle) -> IncidentAnalysis:
+    async def analyze(
+        self, evidence: EvidenceBundle, *, response_code_definitions=()
+    ) -> IncidentAnalysis:
         self.calls += 1
         business = any(signal.signal_type.value == "decline-rate" for signal in evidence.signals)
         category = "business" if business else "technical"
@@ -105,7 +112,10 @@ def known_rule() -> KnownErrorRule:
 async def evaluate(cases: list[dict[str, object]]) -> dict[str, object]:
     detector = AnomalyDetector()
     analyzer = OfflineAnalyzer()
-    classifier = IncidentClassifier(catalog=StaticCatalog(known_rule()), analyzer=analyzer)
+    catalog = StaticCatalog(known_rule())
+    classifier = IncidentClassifier(
+        catalog=catalog, response_catalog=catalog, analyzer=analyzer
+    )
     results: list[dict[str, object]] = []
     latencies_ms: list[float] = []
 

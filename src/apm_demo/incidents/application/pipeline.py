@@ -8,7 +8,11 @@ from uuid import uuid4
 
 from apm_demo.common.contracts import ProviderId
 from apm_demo.incidents.application.classification import IncidentClassifier
-from apm_demo.incidents.application.detection import AnomalyDetector, incident_severity
+from apm_demo.incidents.application.detection import (
+    AnomalyDetector,
+    incident_fingerprint,
+    incident_severity,
+)
 from apm_demo.incidents.application.events import IncidentEventBus
 from apm_demo.incidents.domain import (
     AlertDeliveryStatus,
@@ -179,6 +183,10 @@ class AlertIncidentPipeline:
         )
         severity = self._severity(alert, signals)
         if existing is None:
+            existing = await self._incidents.find_active_by_fingerprint(
+                incident_fingerprint(snapshot, signals)
+            )
+        if existing is None:
             classification = await self._classifier.classify(evidence)
             return await self._create(
                 webhook, alert, provider, evidence, classification.analysis, severity
@@ -188,11 +196,21 @@ class AlertIncidentPipeline:
             and self._severity_rank(severity) <= self._severity_rank(existing.severity)
         ):
             return await self._update_existing(
-                existing, evidence, existing.analysis, severity
+                existing,
+                evidence,
+                existing.analysis,
+                severity,
+                source_alert_fingerprint=alert.fingerprint,
+                alert_group_key=webhook.group_key,
             )
         classification = await self._classifier.classify(evidence)
         return await self._update_existing(
-            existing, evidence, classification.analysis, severity
+            existing,
+            evidence,
+            classification.analysis,
+            severity,
+            source_alert_fingerprint=alert.fingerprint,
+            alert_group_key=webhook.group_key,
         )
 
     async def _create(
@@ -205,9 +223,7 @@ class AlertIncidentPipeline:
         severity: IncidentSeverity,
     ) -> IncidentRecord:
         observed_at = self._now()
-        fingerprint = hashlib.sha256(
-            f"alertmanager:{alert.fingerprint}".encode("utf-8")
-        ).hexdigest()
+        fingerprint = incident_fingerprint(evidence.snapshot, evidence.signals)
         incident = IncidentRecord(
             incident_id=f"inc_{uuid4().hex}",
             fingerprint=fingerprint,
@@ -238,6 +254,9 @@ class AlertIncidentPipeline:
         evidence: EvidenceBundle,
         analysis: IncidentAnalysis,
         severity: IncidentSeverity,
+        *,
+        source_alert_fingerprint: str | None = None,
+        alert_group_key: str | None = None,
     ) -> IncidentRecord:
         was_resolved = existing.status is IncidentStatus.RESOLVED
         escalated = self._severity_rank(severity) > self._severity_rank(existing.severity)
@@ -250,6 +269,10 @@ class AlertIncidentPipeline:
                 "occurrences": existing.occurrences + 1,
                 "last_seen_at": self._now(),
                 "resolved_at": None,
+                "source_alert_fingerprint": (
+                    source_alert_fingerprint or existing.source_alert_fingerprint
+                ),
+                "alert_group_key": alert_group_key or existing.alert_group_key,
             }
         )
         event_type = (

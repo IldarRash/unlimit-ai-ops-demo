@@ -52,6 +52,12 @@ class ClassificationKind(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class OperatorDisposition(StrEnum):
+    ACTION_REQUIRED = "action-required"
+    MONITOR_ONLY = "monitor-only"
+    MANUAL_REVIEW = "manual-review"
+
+
 class AlertDeliveryStatus(StrEnum):
     FIRING = "firing"
     RESOLVED = "resolved"
@@ -194,6 +200,12 @@ class KnownErrorRule(BaseModel):
     headline: str = Field(min_length=1, max_length=120)
     summary: str = Field(min_length=1, max_length=1_000)
     impact: str = Field(min_length=1, max_length=600)
+    operator_disposition: OperatorDisposition = OperatorDisposition.ACTION_REQUIRED
+    operator_decision: str = Field(
+        default="Operator action is required; follow the configured checks.",
+        min_length=1,
+        max_length=600,
+    )
     probable_causes: tuple[str, ...] = Field(min_length=1, max_length=5)
     recommended_actions: tuple["RemediationAction", ...] = Field(
         min_length=1, max_length=5
@@ -222,6 +234,36 @@ class KnownErrorRule(BaseModel):
             value is not None
             for value in (self.outcome, self.payment_method, self.region)
         )
+
+
+class ResponseCodeDefinition(BaseModel):
+    """Versioned operator-reviewed meaning for a normalized provider response code."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    definition_id: str = Field(
+        min_length=1, max_length=80, pattern=r"^[a-z0-9_-]+$"
+    )
+    version: int = Field(default=1, ge=1)
+    provider: ProviderId | None = None
+    response_code: str = Field(
+        min_length=1, max_length=48, pattern=r"^[A-Za-z0-9_.-]+$"
+    )
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=600)
+    active: bool = True
+    created_at: datetime = Field(default_factory=utc_now)
+
+    def matches(self, event: ProviderEvent) -> bool:
+        return (
+            self.active
+            and self.response_code == event.response_code
+            and (self.provider is None or self.provider is event.provider)
+        )
+
+    @property
+    def specificity(self) -> int:
+        return int(self.provider is not None)
 
 
 class AlertEvidence(BaseModel):
@@ -452,6 +494,12 @@ class IncidentAnalysis(BaseModel):
     headline: str = Field(min_length=1, max_length=120)
     summary: str = Field(min_length=1, max_length=1_000)
     impact: str = Field(min_length=1, max_length=600)
+    operator_disposition: OperatorDisposition = OperatorDisposition.MANUAL_REVIEW
+    operator_decision: str = Field(
+        default="Review the available evidence and decide whether intervention is required.",
+        min_length=1,
+        max_length=600,
+    )
     probable_causes: tuple[str, ...] = Field(min_length=1, max_length=5)
     # Empty is accepted only when loading historical stored records. New analyzers
     # and deterministic classifications always provide causal hypotheses.

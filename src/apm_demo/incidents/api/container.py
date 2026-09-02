@@ -17,6 +17,7 @@ from apm_demo.incidents.domain import (
     KnownErrorRule,
     MetricSnapshot,
     RemediationAction,
+    ResponseCodeDefinition,
 )
 from apm_demo.incidents.infrastructure import (
     DeterministicMetricsSource,
@@ -32,6 +33,7 @@ from apm_demo.incidents.ports.repositories import (
     IncidentRepository,
     KnownErrorCatalog,
     ProviderEventRepository,
+    ResponseCodeCatalog,
 )
 from apm_demo.incidents.ports.analysis import IncidentAnalyzer
 
@@ -49,6 +51,7 @@ class IncidentContainer:
     provider_events: ProviderEventRepository
     external_signals: ExternalSignalRepository
     catalog: KnownErrorCatalog
+    response_catalog: ResponseCodeCatalog
     feedback: FeedbackRepository
     event_bus: IncidentEventBus
     pipeline_metrics: PipelineMetrics
@@ -59,8 +62,19 @@ class IncidentContainer:
         initialize = getattr(self.incidents, "initialize", None)
         if initialize is not None:
             await initialize()
-        if not await self.catalog.list_rules(include_inactive=True):
-            await self.catalog.create_version(_default_known_error_rule())
+        rules = await self.catalog.list_rules(include_inactive=True)
+        default_rule = _default_known_error_rule()
+        if not any(
+            rule.rule_id == default_rule.rule_id
+            and rule.version >= default_rule.version
+            for rule in rules
+        ):
+            await self.catalog.create_version(default_rule)
+        if not await self.response_catalog.list_response_code_definitions(
+            include_inactive=True
+        ):
+            for definition in _default_response_code_definitions():
+                await self.response_catalog.create_response_code_version(definition)
 
     async def aclose(self) -> None:
         for resource in self.closeables:
@@ -95,9 +109,12 @@ def build_container(
         )
     )
     if settings.metrics_mode is MetricsMode.PROMETHEUS:
+        prometheus_auth = settings.prometheus_auth()
         metrics = PrometheusMetricsSource(
             settings.prometheus_url,
             timeout_seconds=settings.request_timeout_seconds,
+            username=prometheus_auth[0] if prometheus_auth else None,
+            password=prometheus_auth[1] if prometheus_auth else None,
         )
         metric_closeables: tuple[object, ...] = (metrics,)
     else:
@@ -117,16 +134,17 @@ def build_container(
     else:
         analyzer_closeables = ()
 
-    classifier = IncidentClassifier(catalog=store, analyzer=analyzer)
+    classifier = IncidentClassifier(
+        catalog=store, response_catalog=store, analyzer=analyzer
+    )
     service = AnalyzeProviderIncident(
         metrics=metrics,
         detector=detector,
-        analyzer=analyzer,
+        classifier=classifier,
         incidents=store,
         audit_log=store,
         provider_events=store,
         external_signals=store,
-        classifier=classifier,
         event_limit=settings.provider_event_limit,
         external_signal_limit=settings.external_signal_limit,
     )
@@ -153,6 +171,7 @@ def build_container(
         provider_events=store,
         external_signals=store,
         catalog=store,
+        response_catalog=store,
         feedback=store,
         event_bus=event_bus,
         pipeline_metrics=pipeline_metrics,
@@ -201,29 +220,87 @@ def _demo_snapshots() -> dict[ProviderId, MetricSnapshot]:
 def _default_known_error_rule() -> KnownErrorRule:
     return KnownErrorRule(
         rule_id="atlas-upstream-error",
+        version=2,
         provider=ProviderId.ATLAS_PAY,
         response_code="UPSTREAM_ERROR",
-        response_name="Upstream processing error",
-        response_description=(
-            "AtlasPay could not complete processing because its upstream payment "
-            "system returned a provider-side failure."
-        ),
         outcome=PaymentOutcome.PROVIDER_ERROR,
         headline="AtlasPay upstream processing error",
         summary=(
             "AtlasPay returned the known UPSTREAM_ERROR response. "
-            "Use the provider incident runbook; no LLM analysis is required."
+            "The response matches the reviewed upstream processing rule."
         ),
         impact="AtlasPay payment attempts can fail until the upstream condition clears.",
+        operator_decision=(
+            "Action required: verify AtlasPay status and the affected routing exposure."
+        ),
         probable_causes=("Known AtlasPay upstream processing degradation",),
         recommended_actions=(
             RemediationAction(
                 priority=1,
-                title="Follow the AtlasPay upstream error runbook",
+                title="Check AtlasPay status and routing exposure",
                 rationale="Validate provider status and routing exposure before any mitigation.",
                 safe_to_automate=False,
             ),
         ),
         confidence=0.98,
-        runbook_url="https://example.invalid/runbooks/atlas-upstream-error",
+    )
+
+
+def _default_response_code_definitions() -> tuple[ResponseCodeDefinition, ...]:
+    return (
+        ResponseCodeDefinition(
+            definition_id="approved",
+            response_code="APPROVED",
+            name="Approved payment",
+            description=(
+                "The provider accepted the payment attempt and returned a "
+                "successful response."
+            ),
+        ),
+        ResponseCodeDefinition(
+            definition_id="do-not-honor",
+            response_code="DO_NOT_HONOR",
+            name="Issuer declined",
+            description=(
+                "The payment was declined without a more specific issuer reason; "
+                "operator action should focus on aggregate patterns rather than "
+                "retrying an individual payment."
+            ),
+        ),
+        ResponseCodeDefinition(
+            definition_id="invalid-account",
+            response_code="INVALID_ACCOUNT",
+            name="Invalid account details",
+            description=(
+                "The provider reports that the submitted account or payment "
+                "credentials are not valid for processing."
+            ),
+        ),
+        ResponseCodeDefinition(
+            definition_id="provider-timeout",
+            response_code="PROVIDER_TIMEOUT",
+            name="Provider timeout",
+            description=(
+                "The provider did not return a payment response before the "
+                "configured client timeout."
+            ),
+        ),
+        ResponseCodeDefinition(
+            definition_id="transport-error",
+            response_code="TRANSPORT_ERROR",
+            name="Transport failure",
+            description=(
+                "The client could not complete the network exchange with the provider."
+            ),
+        ),
+        ResponseCodeDefinition(
+            definition_id="atlas-upstream-error",
+            provider=ProviderId.ATLAS_PAY,
+            response_code="UPSTREAM_ERROR",
+            name="Upstream processing error",
+            description=(
+                "AtlasPay could not complete processing because its upstream payment "
+                "system returned a provider-side failure."
+            ),
+        ),
     )

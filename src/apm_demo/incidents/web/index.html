@@ -40,11 +40,8 @@
 
     <main id="workspace" class="workspace" tabindex="-1">
       <section class="workspace-heading" aria-labelledby="page-title">
-        <div>
-          <p class="context-line">Payment operations / provider health</p>
-          <h1 id="page-title">Provider incidents</h1>
-          <p class="page-summary">Evidence first. Operator actions and analysis stay visible in one working surface.</p>
-        </div>
+        <h1 id="page-title">Provider incidents</h1>
+        <p class="page-summary">Impact, cause, and the next safe check.</p>
       </section>
 
       <section class="operator-toolbar" aria-label="Demo operator controls">
@@ -70,16 +67,18 @@
             <a id="incident-dashboard-link" href="#" target="_blank" rel="noreferrer" hidden>Incident pipeline <span aria-hidden="true">↗</span></a>
           </div>
         </div>
-        <div class="scenario-controls" aria-label="Deterministic demo scenarios">
-          <span>Scenarios</span>
-          <button type="button" data-scenario="recover">Recover selected provider</button>
-          <button type="button" data-scenario-provider="atlas-pay" data-scenario="provider-errors">Known technical error (AtlasPay)</button>
-          <button type="button" data-scenario-provider="orbit-wallet" data-scenario="unknown-provider-error">Unknown technical error (OpenAI)</button>
-          <button type="button" data-scenario-provider="orbit-wallet" data-scenario="business-declines">Business decline (OpenAI)</button>
-          <button type="button" data-scenario="slow-provider">Latency</button>
-          <button type="button" data-scenario="provider-timeout">Timeout</button>
-          <button type="button" data-scenario="healthcheck-down">Health down</button>
-        </div>
+        <details class="scenario-disclosure">
+          <summary>Test scenarios <span>Choose a controlled failure or recovery</span></summary>
+          <div class="scenario-controls" aria-label="Deterministic demo scenarios">
+            <button type="button" data-scenario="recover">Recover provider</button>
+            <button type="button" data-scenario-provider="atlas-pay" data-scenario="provider-errors">Known AtlasPay error</button>
+            <button type="button" data-scenario-provider="orbit-wallet" data-scenario="unknown-provider-error">Unknown OrbitWallet error</button>
+            <button type="button" data-scenario-provider="orbit-wallet" data-scenario="business-declines">Business declines</button>
+            <button type="button" data-scenario="slow-provider">Latency</button>
+            <button type="button" data-scenario="provider-timeout">Timeout</button>
+            <button type="button" data-scenario="healthcheck-down">Health down</button>
+          </div>
+        </details>
       </section>
 
       <section class="incident-workspace" aria-label="Incident workspace">
@@ -118,9 +117,9 @@
               <span>Source</span>
               <select id="filter-classification" name="classification">
                 <option value="">All</option>
-                <option value="known">Known catalog</option>
-                <option value="unknown">AI assessed</option>
-                <option value="unavailable">Needs review</option>
+                <option value="known">Known pattern</option>
+                <option value="unknown">Investigated</option>
+                <option value="unavailable">Manual review</option>
               </select>
             </label>
           </form>

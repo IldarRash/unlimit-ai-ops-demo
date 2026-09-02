@@ -13,7 +13,7 @@ route:
 receivers:
   - name: incident-intelligence
     webhook_configs:
-      - url: http://incident-api.railway.internal:8002/api/v1/integrations/alertmanager
+      - url: http://incident-api.railway.internal:8080/api/v1/integrations/alertmanager
         send_resolved: true
         http_config:
           authorization:

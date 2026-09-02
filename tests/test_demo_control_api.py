@@ -15,7 +15,9 @@ from apm_demo.incidents.domain import (
 
 
 class FakeAnalyzer:
-    async def analyze(self, evidence):  # type: ignore[no-untyped-def]
+    async def analyze(
+        self, evidence, *, response_code_definitions=()
+    ):  # type: ignore[no-untyped-def]
         return IncidentAnalysis(
             headline="test",
             summary="test",

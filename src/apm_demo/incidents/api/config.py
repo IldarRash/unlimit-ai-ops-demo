@@ -23,6 +23,8 @@ class IncidentSettings(BaseSettings):
     service_name: str = "incident-intelligence"
     metrics_mode: MetricsMode = MetricsMode.DEMO
     prometheus_url: str = "http://localhost:9090"
+    prometheus_username: str = ""
+    prometheus_password: SecretStr | None = None
     traffic_generator_url: str = "http://traffic-generator:8001"
     provider_emulator_url: str = "http://provider-emulator:8000"
     grafana_public_url: str = "http://localhost:3000"
@@ -69,6 +71,15 @@ class IncidentSettings(BaseSettings):
         value = self.openai_api_key.get_secret_value().strip() if self.openai_api_key else ""
         if len(value) < 20 or value == "replace_with_your_openai_api_key":
             raise ValueError("OPENAI_API_KEY must be configured")
+        prometheus_password = (
+            self.prometheus_password.get_secret_value().strip()
+            if self.prometheus_password
+            else ""
+        )
+        if bool(self.prometheus_username.strip()) != bool(prometheus_password):
+            raise ValueError(
+                "prometheus_username and prometheus_password must be configured together"
+            )
         for name, secret in (
             ("alertmanager_token", self.alertmanager_token),
             ("provider_event_token", self.provider_event_token),
@@ -90,6 +101,13 @@ class IncidentSettings(BaseSettings):
     def openai_api_key_value(self) -> str:
         assert self.openai_api_key is not None
         return self.openai_api_key.get_secret_value().strip()
+
+    def prometheus_auth(self) -> tuple[str, str] | None:
+        if self.prometheus_password is None:
+            return None
+        username = self.prometheus_username.strip()
+        password = self.prometheus_password.get_secret_value().strip()
+        return (username, password) if username and password else None
 
     def alertmanager_token_value(self) -> str:
         return self._secret_value(self.alertmanager_token, self.alertmanager_token_file)

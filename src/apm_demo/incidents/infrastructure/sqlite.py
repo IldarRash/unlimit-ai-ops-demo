@@ -19,6 +19,7 @@ from apm_demo.incidents.domain import (
     IncidentStatus,
     KnownErrorRule,
     ProviderEvent,
+    ResponseCodeDefinition,
     utc_now,
 )
 
@@ -123,6 +124,19 @@ class SQLiteIncidentStore:
             );
             CREATE INDEX IF NOT EXISTS known_error_rules_match_idx
                 ON known_error_rules(provider, response_code, active);
+
+            CREATE TABLE IF NOT EXISTS response_code_definitions (
+                definition_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                provider TEXT,
+                response_code TEXT NOT NULL,
+                active INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                PRIMARY KEY(definition_id, version)
+            );
+            CREATE INDEX IF NOT EXISTS response_code_definitions_match_idx
+                ON response_code_definitions(response_code, provider, active);
 
             CREATE TABLE IF NOT EXISTS catalog_audit (
                 event_id TEXT PRIMARY KEY,
@@ -402,6 +416,95 @@ class SQLiteIncidentStore:
         self, provider: ProviderId, *, limit: int = 20
     ) -> tuple[ProviderEvent, ...]:
         return await self.list_recent_events(provider, limit=limit)
+
+    async def create_response_code_version(
+        self, definition: ResponseCodeDefinition
+    ) -> ResponseCodeDefinition:
+        def operation(connection: sqlite3.Connection) -> ResponseCodeDefinition:
+            duplicate = connection.execute(
+                """
+                SELECT definition_id FROM response_code_definitions
+                WHERE active = 1 AND response_code = ? AND provider IS ?
+                  AND definition_id != ?
+                LIMIT 1
+                """,
+                (
+                    definition.response_code,
+                    definition.provider.value if definition.provider else None,
+                    definition.definition_id,
+                ),
+            ).fetchone()
+            if duplicate is not None:
+                raise CatalogAmbiguityError(
+                    f"response code definition overlaps {duplicate[0]}"
+                )
+            next_version = connection.execute(
+                """
+                SELECT COALESCE(MAX(version), 0) + 1
+                FROM response_code_definitions WHERE definition_id = ?
+                """,
+                (definition.definition_id,),
+            ).fetchone()[0]
+            stored = definition.model_copy(
+                update={"version": next_version, "created_at": utc_now()}
+            )
+            if stored.active:
+                connection.execute(
+                    "UPDATE response_code_definitions SET active = 0 WHERE definition_id = ?",
+                    (stored.definition_id,),
+                )
+            connection.execute(
+                """
+                INSERT INTO response_code_definitions(
+                    definition_id, version, provider, response_code, active,
+                    created_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    stored.definition_id,
+                    stored.version,
+                    stored.provider.value if stored.provider else None,
+                    stored.response_code,
+                    int(stored.active),
+                    stored.created_at.isoformat(),
+                    stored.model_dump_json(),
+                ),
+            )
+            return stored
+
+        return await self._write(operation)
+
+    async def list_response_code_definitions(
+        self, *, include_inactive: bool = False
+    ) -> tuple[ResponseCodeDefinition, ...]:
+        def operation(
+            connection: sqlite3.Connection,
+        ) -> tuple[ResponseCodeDefinition, ...]:
+            where = "" if include_inactive else "WHERE active = 1"
+            rows = connection.execute(
+                f"""
+                SELECT active, payload_json FROM response_code_definitions {where}
+                ORDER BY response_code, provider, version DESC
+                """
+            ).fetchall()
+            return tuple(
+                ResponseCodeDefinition.model_validate_json(row["payload_json"]).model_copy(
+                    update={"active": bool(row["active"])}
+                )
+                for row in rows
+            )
+
+        return await self._read(operation)
+
+    async def resolve_response_codes(
+        self, events: tuple[ProviderEvent, ...]
+    ) -> tuple[ResponseCodeDefinition, ...]:
+        definitions = await self.list_response_code_definitions()
+        return tuple(
+            definition
+            for definition in definitions
+            if any(definition.matches(event) for event in events)
+        )
 
     @staticmethod
     def _rules_overlap(left: KnownErrorRule, right: KnownErrorRule) -> bool:

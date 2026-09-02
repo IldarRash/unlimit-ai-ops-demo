@@ -10,6 +10,7 @@ from apm_demo.incidents.domain import (
     IncidentRecord,
     KnownErrorRule,
     ProviderEvent,
+    ResponseCodeDefinition,
 )
 
 
@@ -67,6 +68,20 @@ class KnownErrorCatalog(Protocol):
     async def list_rules(self, *, include_inactive: bool = False) -> tuple[KnownErrorRule, ...]: ...
 
     async def match(self, event: ProviderEvent) -> KnownErrorRule | None: ...
+
+
+class ResponseCodeCatalog(Protocol):
+    async def create_response_code_version(
+        self, definition: ResponseCodeDefinition
+    ) -> ResponseCodeDefinition: ...
+
+    async def list_response_code_definitions(
+        self, *, include_inactive: bool = False
+    ) -> tuple[ResponseCodeDefinition, ...]: ...
+
+    async def resolve_response_codes(
+        self, events: tuple[ProviderEvent, ...]
+    ) -> tuple[ResponseCodeDefinition, ...]: ...
 
 
 class DeliveryLedger(Protocol):

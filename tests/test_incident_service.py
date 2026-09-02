@@ -1,9 +1,18 @@
 import pytest
 
 from apm_demo.common.contracts import ProviderId
+from apm_demo.incidents.application.classification import ClassificationResult
 from apm_demo.incidents.application.detection import AnomalyDetector
 from apm_demo.incidents.application.service import AnalyzeProviderIncident
-from apm_demo.incidents.domain import AnalysisProvider, AuditEventType, CauseHypothesis, IncidentAnalysis, MetricSnapshot, RemediationAction
+from apm_demo.incidents.domain import (
+    AnalysisProvider,
+    AuditEventType,
+    CauseHypothesis,
+    ClassificationKind,
+    IncidentAnalysis,
+    MetricSnapshot,
+    RemediationAction,
+)
 from apm_demo.incidents.infrastructure import (
     DeterministicMetricsSource,
     InMemoryAuditLog,
@@ -11,9 +20,39 @@ from apm_demo.incidents.infrastructure import (
 )
 
 
-class FakeAnalyzer:
-    async def analyze(self, evidence):
-        return IncidentAnalysis(headline="test", summary="test", impact="test", probable_causes=("test",), causes=(CauseHypothesis(category="technical", title="test", why="test", evidence_refs=("snapshot",)),), recommended_actions=(RemediationAction(priority=1, title="test", rationale="test"),), confidence=0.5, generated_by=AnalysisProvider.OPENAI, model="fake")
+class FakeClassifier:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def classify(self, evidence):
+        self.calls += 1
+        return ClassificationResult(
+            kind=ClassificationKind.UNKNOWN,
+            analysis=IncidentAnalysis(
+                headline="test",
+                summary="test",
+                impact="test",
+                probable_causes=("test",),
+                causes=(
+                    CauseHypothesis(
+                        category="technical",
+                        title="test",
+                        why="test",
+                        evidence_refs=("snapshot",),
+                    ),
+                ),
+                recommended_actions=(
+                    RemediationAction(
+                        priority=1,
+                        title="test",
+                        rationale="test",
+                    ),
+                ),
+                confidence=0.5,
+                generated_by=AnalysisProvider.OPENAI,
+                model="fake",
+            ),
+        )
 
 
 def degraded_snapshot() -> MetricSnapshot:
@@ -34,12 +73,13 @@ def degraded_snapshot() -> MetricSnapshot:
 async def test_service_correlates_repeated_incident_and_records_audit() -> None:
     repository = InMemoryIncidentRepository()
     audit_log = InMemoryAuditLog()
+    classifier = FakeClassifier()
     service = AnalyzeProviderIncident(
         metrics=DeterministicMetricsSource(
             {ProviderId.ATLAS_PAY: degraded_snapshot()}
         ),
         detector=AnomalyDetector(),
-        analyzer=FakeAnalyzer(),
+        classifier=classifier,
         incidents=repository,
         audit_log=audit_log,
     )
@@ -52,6 +92,7 @@ async def test_service_correlates_repeated_incident_and_records_audit() -> None:
     assert second.incident_id == first.incident_id
     assert second.occurrences == 2
     assert len(await repository.list_recent()) == 1
+    assert classifier.calls == 1
     assert [event.event_type for event in await audit_log.list_for_incident(first.incident_id)] == [
         AuditEventType.CREATED,
         AuditEventType.CORRELATED,
@@ -69,13 +110,15 @@ async def test_service_skips_analysis_when_no_signal_is_detected() -> None:
         }
     )
     repository = InMemoryIncidentRepository()
+    classifier = FakeClassifier()
     service = AnalyzeProviderIncident(
         metrics=DeterministicMetricsSource({ProviderId.ATLAS_PAY: healthy}),
         detector=AnomalyDetector(),
-        analyzer=FakeAnalyzer(),
+        classifier=classifier,
         incidents=repository,
         audit_log=InMemoryAuditLog(),
     )
 
     assert await service.execute(ProviderId.ATLAS_PAY) is None
     assert await repository.list_recent() == ()
+    assert classifier.calls == 0

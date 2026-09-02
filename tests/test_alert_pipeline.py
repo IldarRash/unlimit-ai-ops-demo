@@ -9,6 +9,7 @@ from apm_demo.incidents.application.classification import IncidentClassifier
 from apm_demo.incidents.application.detection import AnomalyDetector
 from apm_demo.incidents.application.events import IncidentEventBus
 from apm_demo.incidents.application.pipeline import AlertIncidentPipeline
+from apm_demo.incidents.application.service import AnalyzeProviderIncident
 from apm_demo.incidents.domain import (
     AlertDeliveryStatus,
     AlertmanagerAlert,
@@ -18,8 +19,10 @@ from apm_demo.incidents.domain import (
     EvidenceBundle,
     KnownErrorRule,
     MetricSnapshot,
+    OperatorDisposition,
     ProviderEvent,
     RemediationAction,
+    ResponseCodeDefinition,
     ResponseInsightSource,
     CauseHypothesis,
     IncidentAnalysis,
@@ -37,12 +40,16 @@ class CountingAnalyzer:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def analyze(self, evidence: EvidenceBundle):  # type: ignore[no-untyped-def]
+    async def analyze(
+        self, evidence: EvidenceBundle, *, response_code_definitions=()
+    ):  # type: ignore[no-untyped-def]
         self.calls += 1
         return IncidentAnalysis(
             headline="Unknown provider degradation",
             summary="Synthetic local analysis.",
             impact="Payments may fail.",
+            operator_disposition=OperatorDisposition.ACTION_REQUIRED,
+            operator_decision="Investigate the unknown provider response now.",
             probable_causes=("Unknown provider condition",),
             causes=(
                 CauseHypothesis(
@@ -120,7 +127,9 @@ def pipeline(
     return AlertIncidentPipeline(
         metrics=DeterministicMetricsSource({ProviderId.ATLAS_PAY: snapshot()}),
         detector=AnomalyDetector(),
-        classifier=IncidentClassifier(catalog=store, analyzer=analyzer),
+        classifier=IncidentClassifier(
+            catalog=store, response_catalog=store, analyzer=analyzer
+        ),
         incidents=store,
         provider_events=store,
         external_signals=store,
@@ -134,22 +143,21 @@ def known_rule() -> KnownErrorRule:
         rule_id="atlas-upstream-error",
         provider=ProviderId.ATLAS_PAY,
         response_code="UPSTREAM_ERROR",
-        response_name="Upstream processing error",
-        response_description="AtlasPay could not complete upstream processing.",
         outcome=PaymentOutcome.PROVIDER_ERROR,
         headline="Known AtlasPay upstream error",
         summary="The provider returned a documented upstream error.",
         impact="AtlasPay attempts can fail.",
+        operator_disposition=OperatorDisposition.ACTION_REQUIRED,
+        operator_decision="Check AtlasPay status and routing exposure now.",
         probable_causes=("Documented provider degradation",),
         recommended_actions=(
             RemediationAction(
                 priority=1,
-                title="Open the provider runbook",
+                title="Check provider status",
                 rationale="Use the reviewed deterministic response.",
             ),
         ),
         confidence=0.99,
-        runbook_url="https://example.invalid/runbook",
     )
 
 
@@ -159,6 +167,15 @@ async def test_known_error_bypasses_llm_and_replay_survives_restart(tmp_path) ->
     store = SQLiteIncidentStore(database)
     analyzer = CountingAnalyzer()
     await store.create_version(known_rule())
+    await store.create_response_code_version(
+        ResponseCodeDefinition(
+            definition_id="atlas-upstream-error",
+            provider=ProviderId.ATLAS_PAY,
+            response_code="UPSTREAM_ERROR",
+            name="Upstream processing error",
+            description="AtlasPay could not complete upstream processing.",
+        )
+    )
     await store.append_event(
         ProviderEvent(
             event_id="pev_known",
@@ -169,6 +186,16 @@ async def test_known_error_bypasses_llm_and_replay_survives_restart(tmp_path) ->
             processing_time_ms=920,
         )
     )
+    await store.append_event(
+        ProviderEvent(
+            event_id="pev_unknown_but_not_incident_trigger",
+            provider=ProviderId.ATLAS_PAY,
+            outcome=PaymentOutcome.PROVIDER_ERROR,
+            response_code="NEW_AUXILIARY_CODE",
+            http_status=502,
+            processing_time_ms=870,
+        )
+    )
 
     first = await pipeline(store, analyzer).ingest(webhook())
     incident = await store.get(first.incident_ids[0])
@@ -176,15 +203,23 @@ async def test_known_error_bypasses_llm_and_replay_survives_restart(tmp_path) ->
     assert incident is not None
     assert incident.analysis.generated_by is AnalysisProvider.CATALOG
     assert incident.analysis.classification is ClassificationKind.KNOWN
+    assert (
+        incident.analysis.operator_disposition
+        is OperatorDisposition.ACTION_REQUIRED
+    )
     assert incident.analysis.conclusion is not None
     assert incident.analysis.conclusion.evidence_refs == (
         "snapshot",
         "event:pev_known",
     )
-    assert incident.analysis.response_code_insights[0].response_code == "UPSTREAM_ERROR"
+    insights = {
+        insight.response_code: insight
+        for insight in incident.analysis.response_code_insights
+    }
+    assert insights["UPSTREAM_ERROR"].source is ResponseInsightSource.CATALOG
     assert (
-        incident.analysis.response_code_insights[0].source
-        is ResponseInsightSource.CATALOG
+        insights["NEW_AUXILIARY_CODE"].source
+        is ResponseInsightSource.UNAVAILABLE
     )
     assert analyzer.calls == 0
 
@@ -212,6 +247,9 @@ async def test_unknown_error_is_analyzed_once_then_resolved_and_reopened(tmp_pat
     service = pipeline(store, analyzer)
 
     firing = await service.ingest(webhook())
+    created = await store.get(firing.incident_ids[0])
+    assert created is not None
+    assert created.analysis.operator_disposition is OperatorDisposition.ACTION_REQUIRED
     repeated = await service.ingest(webhook())
     assert repeated.replayed is True
     assert analyzer.calls == 1
@@ -228,3 +266,46 @@ async def test_unknown_error_is_analyzed_once_then_resolved_and_reopened(tmp_pat
     assert reopened.status.value == "open"
     assert reopened.occurrences == 2
     assert analyzer.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_alert_reuses_active_manual_incident_without_second_analysis(tmp_path) -> None:
+    store = SQLiteIncidentStore(str(tmp_path / "incidents.db"))
+    analyzer = CountingAnalyzer()
+    await store.append_event(
+        ProviderEvent(
+            event_id="pev_cross_trigger",
+            provider=ProviderId.ATLAS_PAY,
+            outcome=PaymentOutcome.PROVIDER_ERROR,
+            response_code="NEW_PROVIDER_FAILURE",
+            http_status=502,
+            processing_time_ms=1_100,
+        )
+    )
+    metrics = DeterministicMetricsSource({ProviderId.ATLAS_PAY: snapshot()})
+    detector = AnomalyDetector()
+    classifier = IncidentClassifier(
+        catalog=store, response_catalog=store, analyzer=analyzer
+    )
+    manual_service = AnalyzeProviderIncident(
+        metrics=metrics,
+        detector=detector,
+        classifier=classifier,
+        incidents=store,
+        audit_log=store,
+        provider_events=store,
+        external_signals=store,
+    )
+
+    manual = await manual_service.execute(ProviderId.ATLAS_PAY)
+    assert manual is not None
+    assert analyzer.calls == 1
+
+    alert_result = await pipeline(store, analyzer).ingest(webhook())
+    assert alert_result.incident_ids == (manual.incident_id,)
+    correlated = await store.get(manual.incident_id)
+
+    assert correlated is not None
+    assert correlated.source_alert_fingerprint == "alert-fingerprint-1"
+    assert correlated.occurrences == 2
+    assert analyzer.calls == 1

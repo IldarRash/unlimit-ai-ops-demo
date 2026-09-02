@@ -41,9 +41,9 @@ const labels = {
   critical: "Critical",
   warning: "Warning",
   info: "Info",
-  known: "Known catalog",
-  unknown: "AI assessed",
-  unavailable: "Needs review",
+  known: "Known pattern",
+  unknown: "Investigated",
+  unavailable: "Manual review",
 };
 
 let toastTimer;
@@ -131,10 +131,10 @@ function setLoading(loading) {
 
 async function loadRuntime() {
   state.runtime = await request("/api/v1/runtime");
-  const analyzer = state.runtime.openai_requests_enabled
-    ? state.runtime.model
-    : `${state.runtime.model} · requests gated`;
-  elements.runtimeLabel.textContent = `${analyzer} · ${state.runtime.metrics_mode} metrics`;
+  const investigationMode = state.runtime.openai_requests_enabled
+    ? "Investigation reports enabled"
+    : "Investigation reports restricted";
+  elements.runtimeLabel.textContent = `${investigationMode} · ${state.runtime.metrics_mode} metrics`;
   setDashboardLink(elements.providerDashboard, state.runtime.grafana_provider_dashboard_url);
   setDashboardLink(elements.incidentDashboard, state.runtime.grafana_incident_dashboard_url);
 }
@@ -230,7 +230,7 @@ async function analyzeProvider(event) {
       return;
     }
     await loadIncidents(result.incident.incident_id);
-    setActionStatus(`Analysis complete: ${result.incident.analysis.classification === "known" ? "catalog match" : "OpenAI assessment"}.`, "success");
+    setActionStatus(`Incident assessment complete: ${labels[result.incident.analysis.classification].toLowerCase()}.`, "success");
     showToast(`Incident ${result.incident.occurrences > 1 ? "correlated" : "created"}.`);
   } catch (error) {
     setActionStatus(error.message, "error");
@@ -422,7 +422,7 @@ function renderDetail() {
       <div class="detail-meta">
         <span class="severity-badge" data-severity="${escapeHtml(incident.severity)}">${escapeHtml(labels[incident.severity])}</span>
         <span class="status-badge">${escapeHtml(labels[incident.status])}</span>
-        <span class="source-badge" data-classification="${escapeHtml(analysis.classification)}">${escapeHtml(labels[analysis.classification])} · ${escapeHtml(analysis.generated_by)}</span>
+        <span class="source-badge" data-classification="${escapeHtml(analysis.classification)}">${escapeHtml(labels[analysis.classification])}</span>
       </div>
       <h2>${escapeHtml(analysis.headline)}</h2>
       <div class="incident-id">${escapeHtml(incident.incident_id)} · ${escapeHtml(labels[incident.provider])} · ${incident.occurrences} occurrence${incident.occurrences === 1 ? "" : "s"}</div>
@@ -433,36 +433,21 @@ function renderDetail() {
     </header>
 
     <div class="detail-body">
-      <section class="detail-section" aria-labelledby="evidence-title">
+      <section class="detail-section" aria-labelledby="analysis-title">
         <div class="section-heading">
-          <h3 id="evidence-title">Measured evidence</h3>
-          <p>${snapshot.available ? `${snapshot.window_seconds}s window` : "Metrics unavailable"} · ${escapeHtml(incident.evidence.source)}</p>
+          <h3 id="analysis-title">Incident analysis</h3>
+          <p>${Math.round(analysis.confidence * 100)}% confidence · ${escapeHtml(labels[analysis.classification])} · advisory only</p>
         </div>
-        <dl class="metric-table">
-          ${metric("Total attempts", formatNumber(snapshot.total_requests), false)}
-          ${metric("p95 latency", `${Math.round(snapshot.p95_latency_ms)} ms`, snapshot.p95_latency_ms >= 800)}
+        ${renderOperatorDecision(analysis)}
+        ${renderConclusion(analysis.conclusion)}
+        <dl class="metric-table metric-table-compact" aria-label="Measured evidence summary">
+          ${metric("Attempts", formatNumber(snapshot.total_requests), false)}
           ${metric("Provider errors", countWithShare(counts.provider_error, snapshot.total_requests), snapshot.error_rate >= 0.05)}
           ${metric("Timeouts", countWithShare(counts.timeout, snapshot.total_requests), snapshot.timeout_rate >= 0.03)}
           ${metric("Declines", countWithShare(declineCount, snapshot.total_requests), declineShare(snapshot) >= 0.1)}
-          ${metric("Successful", countWithShare(counts.success, snapshot.total_requests), false)}
+          ${metric("p95", `${Math.round(snapshot.p95_latency_ms)} ms`, snapshot.p95_latency_ms >= 800)}
           ${metric("Health", snapshot.health_up ? "Up" : "Down", !snapshot.health_up)}
         </dl>
-        <ul class="signal-list" aria-label="Detected signals">
-          ${incident.evidence.signals
-            .map(
-              (signal) => `<li class="signal" data-severity="${escapeHtml(signal.severity)}"><span class="signal-dot" aria-hidden="true"></span>${escapeHtml(signal.description)}</li>`
-            )
-            .join("")}
-        </ul>
-        ${renderProviderEvents(incident.evidence.provider_events, analysis.response_code_insights)}
-      </section>
-
-      <section class="detail-section" aria-labelledby="analysis-title">
-        <div class="section-heading">
-          <h3 id="analysis-title">Investigation analysis</h3>
-          <p>${Math.round(analysis.confidence * 100)}% confidence · ${escapeHtml(labels[analysis.classification])} · advisory only</p>
-        </div>
-        ${renderConclusion(analysis.conclusion)}
         ${analysis.summary === analysis.conclusion?.statement ? "" : `<p class="analysis-summary">${escapeHtml(analysis.summary)}</p>`}
         <p class="analysis-impact"><strong>Potential impact</strong>${escapeHtml(analysis.impact)}</p>
         <div class="analysis-columns">
@@ -482,8 +467,26 @@ function renderDetail() {
             </ol>
           </div>
         </div>
-        ${analysis.runbook_url ? `<a class="runbook-link" href="${escapeHtml(analysis.runbook_url)}" target="_blank" rel="noreferrer">Open reviewed runbook <span aria-hidden="true">↗</span></a>` : ""}
+        ${analysis.runbook_url ? `<a class="runbook-link" href="${escapeHtml(analysis.runbook_url)}" target="_blank" rel="noreferrer">Open operator guide <span aria-hidden="true">↗</span></a>` : ""}
       </section>
+
+      <details class="detail-disclosure evidence-disclosure">
+        <summary>Evidence details <span>${incident.evidence.provider_events.length} recent provider events · ${snapshot.available ? `${snapshot.window_seconds}s metric window` : "metrics unavailable"}</span></summary>
+        <div class="disclosure-content evidence-content">
+          <div class="section-heading">
+            <h3>Signals and response codes</h3>
+            <p>${escapeHtml(incident.evidence.source)}</p>
+          </div>
+          <ul class="signal-list" aria-label="Detected signals">
+            ${incident.evidence.signals
+              .map(
+                (signal) => `<li class="signal" data-severity="${escapeHtml(signal.severity)}"><span class="signal-dot" aria-hidden="true"></span>${escapeHtml(signal.description)}</li>`
+              )
+              .join("")}
+          </ul>
+          ${renderProviderEvents(incident.evidence.provider_events, analysis.response_code_insights)}
+        </div>
+      </details>
 
       <details class="detail-disclosure">
         <summary>Feedback and audit <span>${state.audit.length} audit event${state.audit.length === 1 ? "" : "s"}</span></summary>
@@ -514,7 +517,7 @@ function renderCauses(analysis) {
   const causes = Array.isArray(structuredCauses) && structuredCauses.length
     ? structuredCauses
     : (analysis.probable_causes || []).map((title) => ({ category: "technical", title, why: "Recorded analysis did not include structured cause evidence.", evidence_refs: [] }));
-  const provenance = analysis.generated_by === "catalog" ? "Catalog" : analysis.generated_by === "openai" ? "OpenAI" : "Manual review";
+  const provenance = analysis.generated_by === "catalog" ? "Database rule" : analysis.generated_by === "openai" ? "Investigation" : "Evidence review";
   return `<ul class="cause-list">${causes.map((cause) => `
     <li class="cause-card" data-category="${escapeHtml(cause.category)}">
       <div class="cause-meta"><span>${escapeHtml(cause.category || "technical")}</span><span>${provenance}</span></div>
@@ -522,6 +525,20 @@ function renderCauses(analysis) {
       <p><b>Why</b> ${escapeHtml(cause.why || "No explanation recorded.")}</p>
       <div class="evidence-refs">${(cause.evidence_refs || []).length ? cause.evidence_refs.map(evidenceLabel).join("") : "<span>Evidence source unavailable</span>"}</div>
     </li>`).join("")}</ul>`;
+}
+
+function renderOperatorDecision(analysis) {
+  const disposition = analysis.operator_disposition || "manual-review";
+  const dispositionLabels = {
+    "action-required": "Action required",
+    "monitor-only": "Monitor only",
+    "manual-review": "Manual review",
+  };
+  return `
+    <div class="operator-decision" data-disposition="${escapeHtml(disposition)}">
+      <strong>${escapeHtml(dispositionLabels[disposition] || "Manual review")}</strong>
+      <p>${escapeHtml(analysis.operator_decision || "Review the available evidence before taking action.")}</p>
+    </div>`;
 }
 
 function evidenceLabel(ref) {
@@ -598,7 +615,7 @@ function renderProviderEvents(events = [], insights = []) {
     <div class="provider-events">
       <div class="provider-events-heading">
         <h4>Response-code evidence</h4>
-        <span>${events.length} recent normalized sample${events.length === 1 ? "" : "s"} · not full traffic</span>
+        <span>${events.length} recent provider event${events.length === 1 ? "" : "s"} · not full traffic</span>
       </div>
       <div class="event-table-wrap">
         <table>
@@ -612,9 +629,9 @@ function renderProviderEvents(events = [], insights = []) {
             const latencyRange = `${Math.min(...latencies)}–${Math.max(...latencies)} ms`;
             return `<tr>
               <td><code>${escapeHtml(code)}</code><strong>${escapeHtml(insight?.name || "Explanation unavailable")}</strong></td>
-              <td>${escapeHtml(insight?.description || "No reviewed catalog definition or validated AI explanation was stored.")}</td>
-              <td><strong>${samples.length} / ${events.length} samples</strong><span>${escapeHtml(outcomes)} · ${escapeHtml(methods)} · HTTP ${escapeHtml(httpStatuses)} · ${escapeHtml(latencyRange)}</span></td>
-              <td><span class="insight-source" data-source="${escapeHtml(insight?.source || "unavailable")}">${escapeHtml(insight?.source === "catalog" ? "Internal catalog" : insight?.source === "openai" ? "OpenAI hypothesis" : "Unavailable")}</span></td>
+              <td>${escapeHtml(insight?.description || "No reviewed catalog definition or validated investigation explanation was stored.")}</td>
+              <td><strong>${samples.length} of ${events.length} recent events</strong><span>${escapeHtml(outcomes)} · ${escapeHtml(methods)} · HTTP ${escapeHtml(httpStatuses)} · ${escapeHtml(latencyRange)}</span></td>
+              <td><span class="insight-source" data-source="${escapeHtml(insight?.source || "unavailable")}">${escapeHtml(insight?.source === "catalog" ? "Database catalog" : insight?.source === "openai" ? "Investigation hypothesis" : "Unavailable")}</span></td>
             </tr>`;
           }).join("")}</tbody>
         </table>

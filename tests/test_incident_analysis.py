@@ -24,6 +24,7 @@ from apm_demo.incidents.domain import (
     PaymentMethodBreakdown,
     ProviderEvent,
     RemediationAction,
+    ResponseCodeDefinition,
     ResponseInsightSource,
 )
 from apm_demo.incidents.infrastructure.analysis import (
@@ -66,6 +67,8 @@ async def test_openai_adapter_requests_strict_non_stored_structured_output() -> 
         "headline": "AtlasPay latency degradation",
         "summary": "Latency and error signals exceed their configured thresholds.",
         "impact": "Some AtlasPay payments may complete slowly or fail.",
+        "operator_disposition": "action-required",
+        "operator_decision": "Check AtlasPay status and recent routing changes now.",
         "probable_causes": ["Provider processing degradation"],
         "causes": [{"category": "technical", "title": "Provider processing degradation", "why": "Error signal exceeded threshold.", "evidence_refs": ["snapshot", "signal:error-rate"]}],
         "conclusion": {
@@ -126,11 +129,69 @@ async def test_openai_adapter_requests_strict_non_stored_structured_output() -> 
 
 @pytest.mark.asyncio
 async def test_openai_adapter_rejects_unreferenced_evidence() -> None:
-    output = {"headline": "x", "summary": "x", "impact": "x", "probable_causes": ["x"], "causes": [{"category": "technical", "title": "x", "why": "x", "evidence_refs": ["event:not-present"]}], "conclusion": {"statement": "x", "evidence_refs": ["snapshot"]}, "response_code_explanations": [], "recommended_actions": [{"priority": 1, "title": "x", "rationale": "x"}], "confidence": 0.1}
+    output = {"headline": "x", "summary": "x", "impact": "x", "operator_disposition": "action-required", "operator_decision": "Review the incident now.", "probable_causes": ["x"], "causes": [{"category": "technical", "title": "x", "why": "x", "evidence_refs": ["event:not-present"]}], "conclusion": {"statement": "x", "evidence_refs": ["snapshot"]}, "response_code_explanations": [], "recommended_actions": [{"priority": 1, "title": "x", "rationale": "x"}], "confidence": 0.1}
     client = httpx.AsyncClient(base_url="https://api.openai.test/v1", transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"output_text": json.dumps(output)})))
     analyzer = OpenAIIncidentAnalyzer("sk-test-abcdefghijklmnopqrstuvwxyz", model="test-model", requests_enabled=True, client=client, max_attempts=1)
     with pytest.raises(AnalysisUnavailable):
         await analyzer.analyze(evidence())
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_rejects_monitor_only_for_critical_evidence() -> None:
+    captured: dict[str, object] = {}
+    assert any(signal.severity.value == "critical" for signal in evidence().signals)
+    output = {
+        "headline": "AtlasPay degradation",
+        "summary": "Critical error evidence is present.",
+        "impact": "Payments may fail.",
+        "operator_disposition": "monitor-only",
+        "operator_decision": "Continue monitoring without intervention.",
+        "probable_causes": ["Provider degradation"],
+        "causes": [
+            {
+                "category": "technical",
+                "title": "Provider degradation",
+                "why": "The error signal crossed its critical threshold.",
+                "evidence_refs": ["snapshot", "signal:error-rate"],
+            }
+        ],
+        "conclusion": {
+            "statement": "Critical provider degradation is present.",
+            "evidence_refs": ["snapshot", "signal:error-rate"],
+        },
+        "response_code_explanations": [],
+        "recommended_actions": [
+            {
+                "priority": 1,
+                "title": "Monitor provider",
+                "rationale": "Observe the error rate.",
+            }
+        ],
+        "confidence": 0.8,
+    }
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"output_text": json.dumps(output)})
+
+    client = httpx.AsyncClient(
+        base_url="https://api.openai.test/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    analyzer = OpenAIIncidentAnalyzer(
+        "sk-test-abcdefghijklmnopqrstuvwxyz",
+        model="test-model",
+        requests_enabled=True,
+        client=client,
+        max_attempts=1,
+    )
+
+    with pytest.raises(AnalysisUnavailable, match="OpenAI analysis failed"):
+        await analyzer.analyze(evidence())
+
+    assert captured["text"]["format"]["schema"]["$defs"][  # type: ignore[index]
+        "OperatorDisposition"
+    ]["enum"] == ["action-required", "manual-review"]
     await client.aclose()
 
 
@@ -154,6 +215,8 @@ async def test_openai_adapter_accepts_supplied_external_signal_reference() -> No
         "headline": "Correlated provider degradation",
         "summary": "Metrics and the provider status signal align.",
         "impact": "Some payments may fail.",
+        "operator_disposition": "action-required",
+        "operator_decision": "Confirm the provider status before changing routing.",
         "probable_causes": ["Provider degradation"],
         "causes": [
             {
@@ -260,6 +323,8 @@ async def test_openai_adapter_explains_only_unknown_codes_and_verifies_counts() 
         "headline": "AtlasPay response degradation",
         "summary": "An unknown provider response accompanies elevated errors.",
         "impact": "Some payments fail.",
+        "operator_disposition": "action-required",
+        "operator_decision": "Confirm APX_771 with AtlasPay before mitigation.",
         "probable_causes": ["Undocumented upstream rejection"],
         "causes": [
             {
@@ -307,7 +372,17 @@ async def test_openai_adapter_explains_only_unknown_codes_and_verifies_counts() 
         max_attempts=1,
     )
 
-    result = await analyzer.analyze(supplied)
+    result = await analyzer.analyze(
+        supplied,
+        response_code_definitions=(
+            ResponseCodeDefinition(
+                definition_id="approved",
+                response_code="APPROVED",
+                name="Approved payment",
+                description="The provider accepted the payment attempt.",
+            ),
+        ),
+    )
     model_input = json.loads(captured["input"])  # type: ignore[arg-type]
     schema = captured["text"]["format"]["schema"]  # type: ignore[index]
 
@@ -333,6 +408,27 @@ def test_openai_adapter_rejects_placeholder_key() -> None:
         OpenAIIncidentAnalyzer(
             "replace_with_your_openai_api_key",
             model="test-model",
+        )
+
+
+def test_prometheus_credentials_are_paired_and_exposed_only_as_http_auth() -> None:
+    settings = IncidentSettings(
+        _env_file=None,
+        openai_api_key="sk-test-abcdefghijklmnopqrstuvwxyz",
+        prometheus_username="metrics-reader",
+        prometheus_password="private-prometheus-password",
+    )
+
+    assert settings.prometheus_auth() == (
+        "metrics-reader",
+        "private-prometheus-password",
+    )
+
+    with pytest.raises(ValueError, match="configured together"):
+        IncidentSettings(
+            _env_file=None,
+            openai_api_key="sk-test-abcdefghijklmnopqrstuvwxyz",
+            prometheus_username="metrics-reader",
         )
 
 

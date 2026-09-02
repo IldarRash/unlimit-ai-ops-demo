@@ -51,6 +51,7 @@ from apm_demo.incidents.domain import (
     IncidentStatus,
     KnownErrorRule,
     ProviderEvent,
+    ResponseCodeDefinition,
 )
 from apm_demo.incidents.infrastructure import (
     AnalysisUnavailable,
@@ -465,6 +466,31 @@ def create_app(
     ) -> tuple[KnownErrorRule, ...]:
         _require_admin(request, resolved_settings.catalog_admin_token_value())
         return await container.catalog.list_rules(include_inactive=include_inactive)
+
+    @app.get(
+        "/api/v1/response-code-catalog",
+        response_model=list[ResponseCodeDefinition],
+    )
+    async def list_response_code_catalog(
+        request: Request, include_inactive: bool = False
+    ) -> tuple[ResponseCodeDefinition, ...]:
+        _require_admin(request, resolved_settings.catalog_admin_token_value())
+        return await container.response_catalog.list_response_code_definitions(
+            include_inactive=include_inactive
+        )
+
+    @app.post(
+        "/api/v1/response-code-catalog",
+        response_model=ResponseCodeDefinition,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_response_code_definition(
+        definition: ResponseCodeDefinition, request: Request
+    ) -> ResponseCodeDefinition:
+        _require_admin(request, resolved_settings.catalog_admin_token_value())
+        return await container.response_catalog.create_response_code_version(
+            definition
+        )
 
     @app.get("/api/v1/catalog/audit", response_model=list[CatalogAuditEvent])
     async def list_catalog_audit(
